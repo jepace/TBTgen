@@ -11,18 +11,23 @@ Builds a complete PowerPoint trivia deck for each venue-night from one spreadshe
   - **CategoryQuestions**: which question goes in which category, position 1–5. A question can be in any
     number of categories, so reusing a question later = adding a row here.
   - **Sets**: a night's game = 9 categories (round 1–3 × slot 1–3); mark exactly one `bonus` = Y
-  - **Venues**, **Schedule** (date + venue + set), **Tiebreakers**, **Settings**
+  - **Venues**: name, logo, region, and `calendar_name` (how the venue is written in calendar event titles)
+  - **Schedule**: date, venue, set, host, calendar event. Nights without a set are skipped by the build.
+  - **Tiebreakers**, **Settings** (incl. `calendar_id`)
   - **Usage**: which venue heard which question, in which category, when (filled in by `--record`)
 - IDs are permanent values, never formulas, so sorting rows is safe. Don't delete questions or categories;
   mark them `retired` so their history stays.
   - In Excel/Numbers: leave the ID blank on new rows and run `python3 build.py --ids` (every build also does it).
-  - In Google Sheets: install `google_sheet_ids.gs` (Extensions → Apps Script) and IDs appear as you type.
+  - In Google Sheets: install `tbtgen_sheet.gs` (Extensions → Apps Script) and IDs appear as you type.
 - `assets/`: logos, images, audio/video referenced from the sheet (paths are relative to `assets/`).
   `assets/media/` (songs, movie clips) is not in Git: copy it from Google Drive (TBTgen/assets/media),
   or run `python3 make_sample_media.py` to create placeholder clips for the sample bank.
 - `keynote_finish.applescript`: Mac only. Opens a generated .pptx in Keynote, fixes the auto-advance timing,
   saves a .key file. (Not yet confirmed working.)
-- `google_sheet_ids.gs`: Apps Script for the Google Sheet version; assigns IDs as you type.
+- `tbtgen_sheet.gs`: Apps Script for the Google Sheet (Extensions → Apps Script). Adds a **TBTgen** menu:
+  - IDs appear automatically as you type new questions/categories.
+  - **Pull schedule from calendar…** reads a week from the Trivia By Troy Schedule calendar and adds a
+    Schedule row per night ("Venue - Host" → venue, host). Then pick a set for each night from the drop-down.
 - `build.py`: the generator
 
 ## Where things live

@@ -503,16 +503,22 @@ def countdown_logo(slide, timing, seconds):
     timing.auto.append(("wipe", color.shape_id, int(seconds * 1000), "up"))
 
 
+def venue_logo(venue):
+    """The venue's logo, or the Trivia By Troy logo if the venue has none yet."""
+    p = ASSETS / str(venue.get("logo") or "")
+    return p if venue.get("logo") and p.exists() else ASSETS / "brand/tbt_logo.png"
+
+
 def slide_venue_title(deck, venue):
     s = deck.slide()
-    picture(s, ASSETS / venue["logo"], Inches(4.4), Inches(0.5), Inches(4.5), Inches(4.0))
+    picture(s, venue_logo(venue), Inches(4.4), Inches(0.5), Inches(4.5), Inches(4.0))
     text(s, 0, Inches(4.6), W, Inches(2), "Trivia Night", size=88, font=SCRIPT, align=PP_ALIGN.CENTER)
 
 
 def slide_host(deck, venue, host):
     """Slide 2: "Tonight's host <name>" in the script font."""
     s = deck.slide()
-    header(s, "Trivia Night", ASSETS / venue["logo"])
+    header(s, "Trivia Night", venue_logo(venue))
     text(s, 0, Inches(1.9), W, Inches(1.2), "Tonight’s host", size=54, font=SCRIPT, align=PP_ALIGN.CENTER,
          anchor=MSO_ANCHOR.MIDDLE)
     text(s, 0, Inches(3.1), W, Inches(2.2), str(host).strip(), size=110, font=SCRIPT, align=PP_ALIGN.CENTER,
@@ -521,13 +527,13 @@ def slide_host(deck, venue, host):
 
 def slide_bullets(deck, venue, title, items, size=20):
     s = deck.slide()
-    header(s, title, ASSETS / venue["logo"])
+    header(s, title, venue_logo(venue))
     bullets(s, Inches(0.6), Inches(1.3), Inches(11), Inches(5.8), items, size=size)
 
 
 def slide_script(deck, venue, script, sub="", head="Trivia Night"):
     s = deck.slide()
-    header(s, head, ASSETS / venue["logo"])
+    header(s, head, venue_logo(venue))
     text(s, 0, Inches(2.2), W, Inches(1.8), script, size=80, font=SCRIPT, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
     if sub:
         text(s, 0, Inches(4.6), W, Inches(0.8), sub, size=24, bold=True, italic=True, align=PP_ALIGN.CENTER)
@@ -535,7 +541,7 @@ def slide_script(deck, venue, script, sub="", head="Trivia Night"):
 
 def slide_upcoming(deck, venue, settings):
     s = deck.slide()
-    header(s, "Upcoming Trivia Nights", ASSETS / venue["logo"])
+    header(s, "Upcoming Trivia Nights", venue_logo(venue))
     text(s, Inches(0.8), Inches(1.6), Inches(11), Inches(3.4), venue["upcoming_nights"], size=22, bold=True,
          italic=True, spacing=14)
     text(s, Inches(0.8), Inches(5.1), Inches(11), Inches(0.5), "Always follow our social media for updated schedule!",
@@ -558,7 +564,7 @@ def slide_qr(deck, top, qr, bottom):
 def slide_results(deck, venue, title, lines=10):
     """Placeholder for the host to type scores into (phase 2: fill from a score sheet)."""
     s = deck.slide()
-    header(s, title, ASSETS / venue["logo"])
+    header(s, title, venue_logo(venue))
     text(s, Inches(0.6), Inches(1.3), Inches(11), Inches(5.8),
          "\n".join(f"{i}.  " for i in range(1, lines + 1)), size=22, bold=True, spacing=4)
 
@@ -642,7 +648,7 @@ def slide_answer(deck, cat, qq, num):
 def slide_tiebreaker(deck, venue, tbs, with_answers):
     s = deck.slide()
     text(s, 0, Inches(0.1), W, Inches(1.1), "Tiebreaker", size=54, font=SCRIPT, align=PP_ALIGN.CENTER)
-    picture(s, ASSETS / venue["logo"], *LOGO_BOX)
+    picture(s, venue_logo(venue), *LOGO_BOX)
     rules = ("Participating teams should move so that all teams and host are in close proximity – failure to move "
              "results in a forfeit.\nTeams write down their answers for each of these years. The host adds up how many "
              "years off each answer is; whichever team's total is lowest WINS!")
@@ -777,15 +783,25 @@ def main():
     if a.ids:
         return
     bank = load_bank(a.bank)
-    schedule = [r for r in bank["Schedule"]
-                if (not a.venue or r["venue_id"] == a.venue)
-                and (not a.date_from or as_date(r["date"]) >= as_date(a.date_from))
-                and (not a.date_to or as_date(r["date"]) <= as_date(a.date_to))]
+    rows = [r for r in bank["Schedule"]
+            if (not a.venue or r["venue_id"] == a.venue)
+            and (not a.date_from or as_date(r["date"]) >= as_date(a.date_from))
+            and (not a.date_to or as_date(r["date"]) <= as_date(a.date_to))]
+    schedule = []
+    for r in rows:
+        label = f"{as_date(r['date'])} {r.get('calendar_event') or r['venue_id']}"
+        if not r["venue_id"] or r["venue_id"] not in bank["venues"]:
+            print(f"SKIPPED: {label}: venue '{r['venue_id']}' is not on the Venues tab")
+        elif not r["set_id"]:
+            print(f"SKIPPED: {label}: no set assigned yet")
+        else:
+            schedule.append(r)
     if not schedule:
-        sys.exit("Nothing on the Schedule tab matches.")
+        sys.exit("Nothing to build: no matching Schedule rows with a venue and a set.")
     for r in schedule:
-        if r["venue_id"] not in bank["venues"]:
-            sys.exit(f"Schedule: unknown venue '{r['venue_id']}'")
+        v = bank["venues"][r["venue_id"]]
+        if not (v.get("logo") and (ASSETS / str(v["logo"])).exists()):
+            print(f"NOTE: {v['name']} has no logo file yet; using the Trivia By Troy logo")
 
     errs, warns = check(bank, schedule)
     for w in warns:

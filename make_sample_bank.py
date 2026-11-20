@@ -55,15 +55,18 @@ sheet("Settings", ["key", "value", "meaning"], [
     ("company_name", "Trivia By Troy", ""),
     ("instagram", "triviabytroy", ""),
     ("facebook", "Trivia By Troy", ""),
+    ("calendar_id", "8c65afbf52eeb5b75e6502c813588834f034bd7b5f8933e6eb67709921e1c983@group.calendar.google.com",
+     "The 'Trivia By Troy Schedule' Google Calendar (used by TBTgen > Pull schedule from calendar)"),
 ], [24, 18, 80])
 
 # ---------------------------------------------------------------- Venues
-sheet("Venues", ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active"], [
-    ("wine_press", "101 Wine Press", "venues/101_wine_press.jpg", "North", "Mon",
-     "November 25th No Trivia - Happy Thanksgiving!\nDecember 2nd\nDecember 9th", "Y"),
-    ("taproom", "Sample Taproom", "venues/sample_taproom.png", "South", "Tue", "December 1st\nDecember 8th", "Y"),
-    ("pub", "Sample Pub", "venues/sample_pub.png", "North", "Wed", "December 3rd\nDecember 10th", "Y"),
-], [14, 22, 30, 10, 8, 50, 8])
+sheet("Venues", ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active", "calendar_name"], [
+    ("wine_press", "101 Wine Press", "venues/101_wine_press.jpg", "North", "Wed",
+     "November 25th No Trivia - Happy Thanksgiving!\nDecember 2nd\nDecember 9th", "Y", "101 Wine Press"),
+    ("taproom", "Sample Taproom", "venues/sample_taproom.png", "South", "Tue", "December 1st\nDecember 8th", "Y",
+     "Sample Taproom"),
+    ("pub", "Sample Pub", "venues/sample_pub.png", "North", "Wed", "December 3rd\nDecember 10th", "Y", "Sample Pub"),
+], [14, 22, 30, 10, 8, 50, 8, 22])
 
 # ---------------------------------------------------------------- Categories
 cats = [
@@ -209,10 +212,11 @@ sheet("Tiebreakers", ["set_id", "order", "question", "answer"], [
 ], [12, 7, 70, 12])
 
 D = dt.date
-sheet("Schedule", ["date", "venue_id", "set_id", "host"], [
-    (D(2026, 11, 23), "wine_press", S, "James"), (D(2026, 11, 24), "taproom", S, "Troy"),
-    (D(2026, 11, 25), "pub", S, "Aaron"),
-], [12, 14, 12, 14], date_cols=[1])
+sheet("Schedule", ["date", "venue_id", "set_id", "host", "calendar_event"], [
+    (D(2026, 11, 23), "wine_press", S, "James", "101 Wine Press - James"),
+    (D(2026, 11, 24), "taproom", S, "Troy", "Sample Taproom - Troy"),
+    (D(2026, 11, 25), "pub", S, "Aaron", "Sample Pub - Aaron"),
+], [12, 14, 12, 14, 30], date_cols=[1])
 
 # Pretend history, to show the repeat checks:
 #  - Sample Pub played the Turkey category last December          -> category warning
@@ -231,6 +235,8 @@ ws.add_data_validation(dv); dv.add("D2:D2000")
 for tab, col in (("Categories", "F"), ("Questions", "J")):
     dv = DataValidation(type="list", formula1='"Y"', allow_blank=True)
     wb[tab].add_data_validation(dv); dv.add(f"{col}2:{col}5000")
+dv = DataValidation(type="list", formula1="=Sets!$A$2:$A$1000", allow_blank=True)
+wb["Schedule"].add_data_validation(dv); dv.add("C2:C2000")
 ws = wb["CategoryQuestions"]
 dv = DataValidation(type="whole", operator="between", formula1="1", formula2="5")
 ws.add_data_validation(dv); dv.add("B2:B10000")

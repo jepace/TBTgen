@@ -853,6 +853,7 @@ def main():
     ap.add_argument("--from", dest="date_from", help="first date (yyyy-mm-dd)")
     ap.add_argument("--to", dest="date_to", help="last date (yyyy-mm-dd)")
     ap.add_argument("--venue", help="only these venue_ids, e.g. wine_press or pops,narrative")
+    ap.add_argument("--only", help="exact nights as date:venue_id pairs, e.g. 2026-12-02:wine_press,2026-12-02:pops")
     ap.add_argument("--record", action="store_true", help="log the questions used to the Usage tab")
     ap.add_argument("--check", action="store_true", help="only run checks, build nothing")
     ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
@@ -903,8 +904,15 @@ def main():
         except ValueError:
             sys.exit("--day takes weekday names like mon, tue, wed (comma-separated)")
     venues = {v.strip() for v in a.venue.split(",")} if a.venue else None
+    only = None
+    if a.only:
+        try:
+            only = {(as_date(p.split(":")[0]), p.split(":")[1].strip()) for p in a.only.split(",") if p.strip()}
+        except (ValueError, IndexError):
+            sys.exit("--only takes date:venue_id pairs, e.g. 2026-12-02:wine_press")
     rows = [r for r in bank["Schedule"]
             if r.get("date")
+            and (only is None or (as_date(r["date"]), r["venue_id"]) in only)
             and (venues is None or r["venue_id"] in venues)
             and (lo is None or as_date(r["date"]) >= lo)
             and (hi is None or as_date(r["date"]) <= hi)

@@ -52,13 +52,19 @@ To cut off access: **TBTgen → Make a new generator key**.
 ## Mac setup (once)
 ```
 brew install python ffmpeg
-cd ~/TBTgen
-python3 -m venv .venv
-.venv/bin/pip install --upgrade pip python-pptx openpyxl pillow lxml
+python3 -m pip install --user --break-system-packages python-pptx openpyxl pillow lxml
 ```
-Then run everything with `.venv/bin/python` (e.g. `.venv/bin/python build.py`), or `source .venv/bin/activate` first.
+(`--break-system-packages` is Homebrew's way of making you confirm a per-user install; with `--user` it only
+affects your account. Prefer a virtual environment? `python3 -m venv .venv` and use `.venv/bin/python`.)
 
-## Run (needs Python 3 with python-pptx, openpyxl, Pillow, lxml; and ffmpeg)
+## The app
+Double-click **TBTgen.command** (or run `python3 tbtgen_app.py`). Your browser opens a page showing a week
+of the schedule: pick the week and weekdays, tick nights, then **Check** or **Build**; "Log as played" also
+writes the Usage tab. Nights with no set or an unknown venue are shown but can't be ticked.
+The first time, macOS may refuse to open a downloaded .command file: right-click it → Open → Open.
+Leave the Terminal window open while using the app; close it or click Quit to stop.
+
+## Command line (needs Python 3 with python-pptx, openpyxl, Pillow, lxml; and ffmpeg)
 ```
 python3 build.py                      # build every scheduled night that has a set -> out/
 python3 build.py --week next --day wed   # just next week's Wednesday decks

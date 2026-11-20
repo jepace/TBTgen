@@ -27,5 +27,8 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   secret key in Script Properties) configured in tbtgen_config.json (gitignored). No Google Cloud/API
   libraries needed. Tested against a local stand-in server that mimics Google's 302 redirects, and the
   .gs logic against fake Apps Script services, but NOT yet deployed for real.
-- Pending: fonts/sizing, Mac app packaging, venue logos for all venues, real questions in the sheet.
+- The user won't use a venv. GUI = `tbtgen_app.py`: stdlib http.server on 127.0.0.1 + a page in the
+  browser (Tkinter avoided: missing in Homebrew Python, old/crashy in Apple's). It shells out to
+  `build.py --only date:venue,...`; per-launch token guards the API. `TBTgen.command` launches it on a Mac.
+- Pending: fonts/sizing, packaging as a real Mac app, venue logos for all venues, real questions in the sheet.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

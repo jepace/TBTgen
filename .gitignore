@@ -1,0 +1,10 @@
+# generated
+out/
+build/
+__pycache__/
+*.pyc
+.DS_Store
+~$*.xlsx
+
+# media (songs / movie clips) are big and live in Google Drive: TBTgen/assets/media
+assets/media/

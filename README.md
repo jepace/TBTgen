@@ -35,9 +35,23 @@ Builds a complete PowerPoint trivia deck for each venue-night from one spreadshe
 - The real question bank, media and images: Google Drive folder **TBTgen** ("Trivia Bank (new layout)" sheet)
 - The real schedule: the "Trivia By Troy Schedule" Google Calendar (not wired in yet)
 
+## Connect the generator to the Google Sheet (once)
+1. In the Trivia Bank sheet: Extensions → Apps Script, paste in `tbtgen_sheet.gs`, Save, reload the sheet.
+2. **TBTgen → Set up generator access…** shows a secret key and these steps:
+   in the Apps Script editor, **Deploy → New deployment → Web app**, Execute as **Me**,
+   Who has access **Anyone**, Deploy, copy the **Web app URL**.
+3. Next to `build.py`, create `tbtgen_config.json` (it's ignored by Git; don't commit it):
+   ```json
+   {"sheet_url": "https://script.google.com/macros/s/…/exec", "token": "the key from step 2"}
+   ```
+Now every run reads the sheet live, and `--record` writes the Usage log back to it.
+Without that file, `trivia_bank.xlsx` is used; `--bank some.xlsx` forces a file.
+If the script changes later: Deploy → Manage deployments → edit → Version: **New version** (same URL).
+To cut off access: **TBTgen → Make a new generator key**.
+
 ## Run (needs Python 3 with python-pptx, openpyxl, Pillow, lxml; and ffmpeg)
 ```
-python3 build.py                      # build every scheduled night -> out/
+python3 build.py                      # build every scheduled night that has a set -> out/
 python3 build.py --from 2026-11-23 --to 2026-11-29 --record
 python3 build.py --check              # only check for repeats/problems
 ```

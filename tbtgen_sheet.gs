@@ -23,6 +23,15 @@
  * - Running it again for the same week only adds events that aren't there yet.
  * - Events whose venue isn't on the Venues tab are still added (venue_id left empty) and listed at the end,
  *   so you can add the venue and fill in its venue_id.
+ *
+ * 3) Generator access (lets build.py read this sheet and log Usage, with no Google Cloud setup)
+ * - TBTgen > Set up generator access… creates a secret key and shows the steps:
+ *   Deploy > New deployment > type "Web app", Execute as: Me, Who has access: Anyone > Deploy,
+ *   then put the Web app URL and the key into tbtgen_config.json next to build.py.
+ * - The web app only answers requests that carry the key. Anyone without the key gets an error.
+ *   To revoke access: "Make a new generator key" (old key stops working) or archive the deployment.
+ * - After changing this script, use Deploy > Manage deployments > edit > Version: New version, so the
+ *   web app runs the new code (the URL stays the same).
  */
 const ID_RULES = {
   Questions:  { idCol: 1, textCol: 2, prefix: 'Q', width: 5 },
@@ -33,6 +42,9 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('TBTgen')
     .addItem('Pull schedule from calendar…', 'pullScheduleFromCalendar')
     .addItem('Assign missing IDs', 'assignAllMissingIds')
+    .addSeparator()
+    .addItem('Set up generator access…', 'setupGeneratorAccess')
+    .addItem('Make a new generator key', 'newGeneratorKey')
     .addToUi();
 }
 
@@ -187,4 +199,89 @@ function mondayOf_(d) {
 
 function norm_(s) {
   return String(s).toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, ' ').trim();
+}
+
+// ---------------------------------------------------------------- generator access (web app)
+
+const KEY_PROP = 'TBTGEN_KEY';
+
+function setupGeneratorAccess() {
+  const props = PropertiesService.getScriptProperties();
+  let key = props.getProperty(KEY_PROP);
+  if (!key) { key = makeKey_(); props.setProperty(KEY_PROP, key); }
+  showKey_(key);
+}
+
+function newGeneratorKey() {
+  const key = makeKey_();
+  PropertiesService.getScriptProperties().setProperty(KEY_PROP, key);
+  showKey_(key);
+}
+
+function makeKey_() {
+  return Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+}
+
+function showKey_(key) {
+  const html = HtmlService.createHtmlOutput(
+    '<div style="font:14px sans-serif;line-height:1.5">' +
+    '<p><b>1.</b> In the Apps Script editor: <b>Deploy → New deployment</b>, gear icon → <b>Web app</b>.<br>' +
+    'Execute as: <b>Me</b>. Who has access: <b>Anyone</b>. Click <b>Deploy</b> and copy the <b>Web app URL</b>.</p>' +
+    '<p><b>2.</b> Next to build.py, create <code>tbtgen_config.json</code>:</p>' +
+    '<textarea style="width:100%;height:90px;font:12px monospace" onclick="this.select()">' +
+    '{\n  "sheet_url": "PASTE THE WEB APP URL HERE",\n  "token": "' + key + '"\n}</textarea>' +
+    '<p>Keep the key private: anyone with the URL <i>and</i> the key can read this sheet.</p></div>')
+    .setWidth(560).setHeight(330);
+  SpreadsheetApp.getUi().showModalDialog(html, 'TBTgen generator access');
+}
+
+function keyOk_(given) {
+  const key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);
+  return !!key && typeof given === 'string' && given === key;
+}
+
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/** GET ?token=KEY&action=tables -> every tab's values (dates as yyyy-mm-dd). */
+function doGet(e) {
+  try {
+    if (!keyOk_(e.parameter.token)) return json_({ ok: false, error: 'wrong or missing key' });
+    if (e.parameter.action !== 'tables') return json_({ ok: false, error: 'unknown action' });
+    const ss = SpreadsheetApp.getActive();
+    const tz = ss.getSpreadsheetTimeZone();
+    const tables = {};
+    ss.getSheets().forEach(sh => {
+      const rows = lastDataRow_(sh), cols = sh.getLastColumn();
+      tables[sh.getName()] = rows < 1 || cols < 1 ? [] :
+        sh.getRange(1, 1, rows, cols).getValues().map(r => r.map(v =>
+          v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : v));
+    });
+    return json_({ ok: true, tables: tables });
+  } catch (err) {
+    return json_({ ok: false, error: String(err) });
+  }
+}
+
+/** POST {token, action:"append_usage", rows:[[date, venue_id, set_id, category_id, question_id], ...]} */
+function doPost(e) {
+  const lock = LockService.getDocumentLock();
+  try {
+    const body = JSON.parse(e.postData.contents);
+    if (!keyOk_(body.token)) return json_({ ok: false, error: 'wrong or missing key' });
+    if (body.action !== 'append_usage') return json_({ ok: false, error: 'unknown action' });
+    const rows = (body.rows || []).map(r => [new Date(String(r[0]) + 'T12:00:00'), r[1], r[2], r[3], r[4]]);
+    if (!rows.length) return json_({ ok: true, added: 0 });
+    lock.waitLock(20000);
+    const sh = SpreadsheetApp.getActive().getSheetByName('Usage');
+    const first = lastDataRow_(sh) + 1;
+    sh.getRange(first, 1, rows.length, 5).setValues(rows);
+    sh.getRange(first, 1, rows.length, 1).setNumberFormat('yyyy-mm-dd');
+    return json_({ ok: true, added: rows.length });
+  } catch (err) {
+    return json_({ ok: false, error: String(err) });
+  } finally {
+    try { lock.releaseLock(); } catch (_) {}
+  }
 }

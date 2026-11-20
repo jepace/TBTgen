@@ -23,6 +23,9 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - The live Google Sheet is "Trivia Bank" (id 1ssBfjj26jdF-gxIXVKcn7VzYJZqV6unsyLx0OXZVRMU) in Drive folder TBTgen.
   Keep its layout in sync with make_sample_bank.py when columns change. It still holds the sample
   questions/sets; Venues and Schedule there are real.
-- Pending: fonts/sizing, Mac app packaging, build.py reading the Google Sheet directly (today: download
-  as .xlsx), venue logos for all venues.
+- build.py reads the live Google Sheet through an Apps Script web app (doGet/doPost in tbtgen_sheet.gs,
+  secret key in Script Properties) configured in tbtgen_config.json (gitignored). No Google Cloud/API
+  libraries needed. Tested against a local stand-in server that mimics Google's 302 redirects, and the
+  .gs logic against fake Apps Script services, but NOT yet deployed for real.
+- Pending: fonts/sizing, Mac app packaging, venue logos for all venues, real questions in the sheet.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

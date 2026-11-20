@@ -2,9 +2,12 @@
 """
 TBTgen: Trivia By Troy deck generator.
 
-Reads trivia_bank.xlsx (Venues, Categories, Questions, CategoryQuestions, Sets, Tiebreakers, Schedule,
-Usage, Settings)
-and builds one PowerPoint deck per scheduled venue-night.
+Reads the Trivia Bank Google Sheet (or a trivia_bank.xlsx file) and builds one PowerPoint deck per
+scheduled venue-night that has a set assigned.
+
+The Google Sheet is used when tbtgen_config.json exists next to this file:
+  {"sheet_url": "<the TBTgen web app URL>", "token": "<the key shown by TBTgen > Set up generator access>"}
+Otherwise trivia_bank.xlsx is used; --bank FILE.xlsx forces a file.
 
   python3 build.py                         # build every row on the Schedule sheet
   python3 build.py --from 2026-11-23 --to 2026-11-29
@@ -19,6 +22,8 @@ import hashlib
 import json
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
@@ -34,6 +39,7 @@ from pptx.util import Emu, Inches, Pt
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 CACHE = ROOT / "build"
+CONFIG = ROOT / "tbtgen_config.json"   # {"sheet_url": "...", "token": "..."}; not in Git
 
 # ----------------------------------------------------------------- look & feel
 FONT = "Avenir Next"          # Mac font; PowerPoint substitutes if missing
@@ -55,14 +61,15 @@ def is_yes(v):
     return str(v).strip().upper() in YES
 
 
-def read_rows(wb, name):
-    """Rows of a tab as dicts keyed by header. Columns with no header are ignored; helper (formula)
-    columns are harmless because the generator only looks at the columns it knows."""
-    ws = wb[name]
-    it = ws.iter_rows(values_only=True)
-    hdr = [str(h).strip() if h is not None else None for h in next(it)]
+def table_rows(values):
+    """Rows of a tab (list of lists, header first) as dicts keyed by header. Columns with no header are
+    ignored; "(auto)" helper columns are kept but don't make an otherwise empty row count."""
+    if not values:
+        return []
+    hdr = [str(h).strip() if h not in (None, "") else None for h in values[0]]
     out = []
-    for r in it:
+    for r in values[1:]:
+        r = list(r) + [""] * (len(hdr) - len(r))          # short rows: missing cells are empty
         rec = {h: ("" if v is None else v) for h, v in zip(hdr, r) if h}
         if all(v in (None, "") for k, v in rec.items() if not k.startswith(AUTO)):
             continue
@@ -70,9 +77,56 @@ def read_rows(wb, name):
     return out
 
 
-def load_bank(path):
+# ------------------------------------------------------------ sources: .xlsx or the Google Sheet
+def tables_from_xlsx(path):
     wb = load_workbook(path, data_only=True)
-    bank = {name: read_rows(wb, name) for name in wb.sheetnames}
+    return {ws.title: [list(r) for r in ws.iter_rows(values_only=True)] for ws in wb.worksheets}
+
+
+class SheetError(Exception):
+    pass
+
+
+def sheet_call(cfg, action, payload=None):
+    """Talk to the TBTgen web app attached to the Google Sheet (see tbtgen_sheet.gs)."""
+    if payload is None:
+        url = cfg["sheet_url"] + "?" + urllib.parse.urlencode({"token": cfg["token"], "action": action})
+        req = urllib.request.Request(url)
+    else:
+        body = json.dumps({"token": cfg["token"], "action": action, **payload}).encode()
+        req = urllib.request.Request(cfg["sheet_url"], data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:   # follows Google's redirect
+            raw = resp.read().decode("utf-8")
+    except Exception as e:
+        raise SheetError(f"could not reach the Google Sheet web app: {e}")
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        hint = " (got a Google sign-in page: the web app's access must be 'Anyone')" if "<html" in raw[:200].lower() else ""
+        raise SheetError("the Google Sheet web app did not return data" + hint)
+    if not data.get("ok"):
+        raise SheetError(data.get("error", "unknown error from the Google Sheet web app"))
+    return data
+
+
+def tables_from_sheet(cfg):
+    data = sheet_call(cfg, "tables")
+    CACHE.mkdir(exist_ok=True)
+    (CACHE / "sheet_snapshot.json").write_text(json.dumps(data["tables"]))   # last copy, for reference
+    return data["tables"]
+
+
+def load_config():
+    if CONFIG.exists():
+        cfg = json.loads(CONFIG.read_text())
+        if cfg.get("sheet_url") and cfg.get("token"):
+            return cfg
+    return None
+
+
+def load_bank(tables):
+    bank = {name: table_rows(vals) for name, vals in tables.items()}
     bank["settings"] = {r["key"]: r["value"] for r in bank["Settings"]}
     bank["venues"] = {r["venue_id"]: r for r in bank["Venues"]}
     bank["cats"] = {r["category_id"]: r for r in bank["Categories"] if r["category_id"]}
@@ -740,30 +794,38 @@ def build_deck(bank, row, outdir):
     return outdir / f"{stem}.pptx", total_secs
 
 
-def record_usage(bank, schedule, path):
-    """Log one Usage row per question played: date, venue, set, category, question."""
-    wb = load_workbook(path)  # keep formulas
-    ws = wb["Usage"]
+def usage_rows(bank, schedule):
+    """One Usage row per question played: date, venue, set, category, question (skipping ones already logged)."""
     have = {(as_date(u["date"]), u["venue_id"], u["set_id"], u["category_id"], u.get("question_id", ""))
             for u in bank["Usage"]}
-    added = 0
+    out = []
     for r in schedule:
         d = as_date(r["date"])
         for sl in bank["sets"][r["set_id"]]:
             for l in bank["links"].get(sl["category_id"], []):
                 k = (d, r["venue_id"], r["set_id"], sl["category_id"], l["question_id"])
                 if k not in have:
-                    ws.append(list(k))
-                    ws.cell(ws.max_row, 1).number_format = "yyyy-mm-dd"
                     have.add(k)
-                    added += 1
+                    out.append(k)
+    return out
+
+
+def record_usage_xlsx(rows, path):
+    wb = load_workbook(path)  # keep formulas
+    ws = wb["Usage"]
+    for k in rows:
+        ws.append(list(k))
+        ws.cell(ws.max_row, 1).number_format = "yyyy-mm-dd"
     wb.save(path)
-    return added
+
+
+def record_usage_sheet(rows, cfg):
+    sheet_call(cfg, "append_usage", {"rows": [[str(k[0]), *k[1:]] for k in rows]})
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bank", default=str(ROOT / "trivia_bank.xlsx"))
+    ap.add_argument("--bank", help="use this .xlsx file instead of the Google Sheet")
     ap.add_argument("--out", default=str(ROOT / "out"))
     ap.add_argument("--from", dest="date_from")
     ap.add_argument("--to", dest="date_to")
@@ -771,18 +833,36 @@ def main():
     ap.add_argument("--record", action="store_true", help="log the questions used to the Usage tab")
     ap.add_argument("--check", action="store_true", help="only run checks, build nothing")
     ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
-    ap.add_argument("--ids", action="store_true", help="only fill in missing question/category IDs, then stop")
+    ap.add_argument("--ids", action="store_true", help="(.xlsx only) fill in missing question/category IDs, then stop")
     a = ap.parse_args()
 
-    try:
-        n = assign_ids(a.bank)
-    except PermissionError:
-        sys.exit("Can't write to the spreadsheet - close it in Excel/Numbers and try again.")
-    if n or a.ids:
-        print(f"Assigned {n} new IDs (saved to the spreadsheet).")
-    if a.ids:
-        return
-    bank = load_bank(a.bank)
+    cfg = None if a.bank else load_config()
+    if cfg:
+        print("Reading the Google Sheet…")
+        try:
+            tables = tables_from_sheet(cfg)
+        except SheetError as e:
+            sys.exit(f"Google Sheet: {e}")
+        if a.ids:
+            sys.exit("In the Google Sheet, IDs are assigned by the TBTgen script as you type "
+                     "(or TBTgen > Assign missing IDs).")
+    else:
+        bank_path = a.bank or str(ROOT / "trivia_bank.xlsx")
+        if not a.bank:
+            print(f"No {CONFIG.name} found: using {Path(bank_path).name}")
+        try:
+            n = assign_ids(bank_path)
+        except PermissionError:
+            sys.exit("Can't write to the spreadsheet - close it in Excel/Numbers and try again.")
+        if n or a.ids:
+            print(f"Assigned {n} new IDs (saved to the spreadsheet).")
+        if a.ids:
+            return
+        tables = tables_from_xlsx(bank_path)
+    bank = load_bank(tables)
+    missing = [r for r in bank["Questions"] if not r.get("question_id") and r.get("question")]
+    if missing:
+        print(f"NOTE: {len(missing)} question(s) have no ID yet and can't be used until they do.")
     rows = [r for r in bank["Schedule"]
             if (not a.venue or r["venue_id"] == a.venue)
             and (not a.date_from or as_date(r["date"]) >= as_date(a.date_from))
@@ -818,7 +898,13 @@ def main():
         print(f"built  {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}   "
               f"(question time ≈ {secs / 60:.0f} min)")
     if a.record:
-        print(f"Usage: recorded {record_usage(bank, schedule, a.bank)} new rows")
+        rows = usage_rows(bank, schedule)
+        if rows:
+            try:
+                record_usage_sheet(rows, cfg) if cfg else record_usage_xlsx(rows, bank_path)
+            except SheetError as e:
+                sys.exit(f"Decks were built, but logging to the Usage tab failed: {e}")
+        print(f"Usage: recorded {len(rows)} new rows")
 
 
 if __name__ == "__main__":

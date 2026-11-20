@@ -4,7 +4,9 @@ import subprocess
 from pathlib import Path
 
 MEDIA = Path(__file__).resolve().parent / "assets" / "media"
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FONT = next((f for f in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                          "/usr/local/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+                          "/System/Library/Fonts/Supplemental/Arial Bold.ttf"] if Path(f).exists()), "")
 MEDIA.mkdir(parents=True, exist_ok=True)
 
 
@@ -21,7 +23,7 @@ for name in ["connected", "alices_restaurant", "thank_you_dido", "gravy", "thank
 for name in ["addams_family_values", "free_birds", "pieces_of_april", "scent_of_a_woman", "hannah_and_her_sisters"]:
     out = MEDIA / f"{name}.mp4"
     if not out.exists():
-        text = "drawtext=" + (f"fontfile={FONT}:" if Path(FONT).exists() else "") + \
+        text = "drawtext=" + (f"fontfile={FONT}:" if FONT else "") + \
                "text='PLACEHOLDER MOVIE CLIP':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.7:x=(w-tw)/2:y=(h-th)/2"
         run("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24:duration=15", "-f", "lavfi",
             "-i", "sine=frequency=330:duration=15", "-vf", text, "-c:v", "libx264", "-crf", "32",

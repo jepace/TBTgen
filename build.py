@@ -307,15 +307,31 @@ def dim_logo():
     return out
 
 
+BOLD_FONTS = [  # first one found is used; all of these include the ♪ ♫ characters
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",            # Linux
+    "/usr/local/share/fonts/dejavu/DejaVuSans-Bold.ttf",               # FreeBSD (x11-fonts/dejavu)
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",               # macOS
+    "/Library/Fonts/Arial Bold.ttf",                                   # older macOS
+    "C:/Windows/Fonts/arialbd.ttf",                                    # Windows
+]
+
+
+def bold_font(size):
+    for path in BOLD_FONTS:
+        if Path(path).exists():
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default(size=size)   # Pillow's built-in font
+
+
 def music_frame():
     out = CACHE / "music_frame.png"
     if not out.exists():
         CACHE.mkdir(exist_ok=True)
         im = Image.new("RGB", (1280, 720), "black")
         d = ImageDraw.Draw(im)
-        f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 260)
+        f = bold_font(260)
         d.text((640, 330), "♪ ♫", font=f, fill="#d63ad6", anchor="mm")
-        f2 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
+        f2 = bold_font(60)
         d.text((640, 600), "Name that song!", font=f2, fill="white", anchor="mm")
         im.save(out)
     return out

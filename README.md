@@ -61,6 +61,8 @@ Then run everything with `.venv/bin/python` (e.g. `.venv/bin/python build.py`), 
 ## Run (needs Python 3 with python-pptx, openpyxl, Pillow, lxml; and ffmpeg)
 ```
 python3 build.py                      # build every scheduled night that has a set -> out/
+python3 build.py --week next --day wed   # just next week's Wednesday decks
+python3 build.py --date 2026-12-02    # one night;  --week this|next|DATE;  --day mon,tue;  --venue a,b
 python3 build.py --from 2026-11-23 --to 2026-11-29 --record
 python3 build.py --check              # only check for repeats/problems
 ```

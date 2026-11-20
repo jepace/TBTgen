@@ -9,9 +9,13 @@ The Google Sheet is used when tbtgen_config.json exists next to this file:
   {"sheet_url": "<the TBTgen web app URL>", "token": "<the key shown by TBTgen > Set up generator access>"}
 Otherwise trivia_bank.xlsx is used; --bank FILE.xlsx forces a file.
 
-  python3 build.py                         # build every row on the Schedule sheet
-  python3 build.py --from 2026-11-23 --to 2026-11-29
-  python3 build.py --venue wine_press
+  python3 build.py                         # every night on the Schedule tab that has a set
+  python3 build.py --week next             # next Mon-Sun (or --week this, --week 2026-11-30)
+  python3 build.py --week next --day wed   # just next week's Wednesday decks
+  python3 build.py --date 2026-12-02       # one night
+  python3 build.py --day wed               # every Wednesday on the schedule
+  python3 build.py --from 2026-11-23 --to 2026-12-06
+  python3 build.py --venue wine_press,pops
   python3 build.py --record                # also log the questions used to the Usage tab
   python3 build.py --check                 # only run the repeat/consistency checks
   python3 build.py --ids                   # only fill in IDs for new questions/categories
@@ -843,9 +847,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bank", help="use this .xlsx file instead of the Google Sheet")
     ap.add_argument("--out", default=str(ROOT / "out"))
-    ap.add_argument("--from", dest="date_from")
-    ap.add_argument("--to", dest="date_to")
-    ap.add_argument("--venue")
+    ap.add_argument("--date", help="only this date (yyyy-mm-dd)")
+    ap.add_argument("--week", help="the Mon-Sun week containing this date (yyyy-mm-dd), or 'this' / 'next'")
+    ap.add_argument("--day", help="only these weekdays, e.g. wed or tue,thu")
+    ap.add_argument("--from", dest="date_from", help="first date (yyyy-mm-dd)")
+    ap.add_argument("--to", dest="date_to", help="last date (yyyy-mm-dd)")
+    ap.add_argument("--venue", help="only these venue_ids, e.g. wine_press or pops,narrative")
     ap.add_argument("--record", action="store_true", help="log the questions used to the Usage tab")
     ap.add_argument("--check", action="store_true", help="only run checks, build nothing")
     ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
@@ -879,10 +886,31 @@ def main():
     missing = [r for r in bank["Questions"] if not r.get("question_id") and r.get("question")]
     if missing:
         print(f"NOTE: {len(missing)} question(s) have no ID yet and can't be used until they do.")
+    lo = as_date(a.date_from) if a.date_from else None
+    hi = as_date(a.date_to) if a.date_to else None
+    if a.date:
+        lo = hi = as_date(a.date)
+    if a.week:
+        today = dt.date.today()
+        ref = {"this": today, "next": today + dt.timedelta(days=7)}.get(a.week.lower()) or as_date(a.week)
+        lo = ref - dt.timedelta(days=ref.weekday())
+        hi = lo + dt.timedelta(days=6)
+    days = None
+    if a.day:
+        names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        try:
+            days = {names.index(d.strip().lower()[:3]) for d in a.day.split(",")}
+        except ValueError:
+            sys.exit("--day takes weekday names like mon, tue, wed (comma-separated)")
+    venues = {v.strip() for v in a.venue.split(",")} if a.venue else None
     rows = [r for r in bank["Schedule"]
-            if (not a.venue or r["venue_id"] == a.venue)
-            and (not a.date_from or as_date(r["date"]) >= as_date(a.date_from))
-            and (not a.date_to or as_date(r["date"]) <= as_date(a.date_to))]
+            if r.get("date")
+            and (venues is None or r["venue_id"] in venues)
+            and (lo is None or as_date(r["date"]) >= lo)
+            and (hi is None or as_date(r["date"]) <= hi)
+            and (days is None or as_date(r["date"]).weekday() in days)]
+    if lo or hi:
+        print(f"Dates: {lo or '…'} to {hi or '…'}" + (f", {a.day} only" if a.day else ""))
     schedule = []
     for r in rows:
         label = f"{as_date(r['date'])} {r.get('calendar_event') or r['venue_id']}"

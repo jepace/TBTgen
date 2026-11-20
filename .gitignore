@@ -9,3 +9,4 @@ __pycache__/
 # media (songs / movie clips) are big and live in Google Drive: TBTgen/assets/media
 assets/media/
 tbtgen_config.json
+.venv/

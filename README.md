@@ -49,6 +49,15 @@ Without that file, `trivia_bank.xlsx` is used; `--bank some.xlsx` forces a file.
 If the script changes later: Deploy → Manage deployments → edit → Version: **New version** (same URL).
 To cut off access: **TBTgen → Make a new generator key**.
 
+## Mac setup (once)
+```
+brew install python ffmpeg
+cd ~/TBTgen
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip python-pptx openpyxl pillow lxml
+```
+Then run everything with `.venv/bin/python` (e.g. `.venv/bin/python build.py`), or `source .venv/bin/activate` first.
+
 ## Run (needs Python 3 with python-pptx, openpyxl, Pillow, lxml; and ffmpeg)
 ```
 python3 build.py                      # build every scheduled night that has a set -> out/

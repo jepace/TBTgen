@@ -12,6 +12,9 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - The user didn't want the question photo animated: it appears immediately. Only the logo countdown animates.
 - Hosts are all on Macs today; presenting in PowerPoint is acceptable.
 - Real data: Google Drive folder "TBTgen"; schedule in the "Trivia By Troy Schedule" calendar
-  (events named "Venue - Host"). Open questions: fixed A/B set group per venue vs weekly assignment;
-  whether the host name goes on slides. Pending: fonts/sizing, Mac app packaging, Google Sheets/Calendar reading.
+  (events named "Venue - Host"). Open question: fixed A/B set group per venue vs weekly assignment.
+- Slide 2 is the host slide: "Tonight's host" + name, script font (Schedule tab `host` column).
+  Deck file names include the host: "2026-11-23 101 Wine Press (James).pptx".
+- The live Google Sheet is "Trivia Bank" (id 1ssBfjj26jdF-gxIXVKcn7VzYJZqV6unsyLx0OXZVRMU) in Drive folder TBTgen.
+  Keep its layout in sync with make_sample_bank.py when columns change. Pending: fonts/sizing, Mac app packaging, Google Sheets/Calendar reading.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

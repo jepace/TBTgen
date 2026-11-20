@@ -509,6 +509,16 @@ def slide_venue_title(deck, venue):
     text(s, 0, Inches(4.6), W, Inches(2), "Trivia Night", size=88, font=SCRIPT, align=PP_ALIGN.CENTER)
 
 
+def slide_host(deck, venue, host):
+    """Slide 2: "Tonight's host <name>" in the script font."""
+    s = deck.slide()
+    header(s, "Trivia Night", ASSETS / venue["logo"])
+    text(s, 0, Inches(1.9), W, Inches(1.2), "Tonight’s host", size=54, font=SCRIPT, align=PP_ALIGN.CENTER,
+         anchor=MSO_ANCHOR.MIDDLE)
+    text(s, 0, Inches(3.1), W, Inches(2.2), str(host).strip(), size=110, font=SCRIPT, align=PP_ALIGN.CENTER,
+         anchor=MSO_ANCHOR.MIDDLE, color=GOLD)
+
+
 def slide_bullets(deck, venue, title, items, size=20):
     s = deck.slide()
     header(s, title, ASSETS / venue["logo"])
@@ -652,10 +662,15 @@ def build_deck(bank, row, outdir):
     set_id = row["set_id"]
     slots = sorted(bank["sets"][set_id], key=lambda r: (int(r["round"]), int(r["slot"])))
     deck = Deck()
-    key_lines = [f"ANSWER KEY — {venue['name']} — {as_date(row['date'])} — set {set_id}", ""]
+    host_txt = str(row.get("host", "") or "").strip()
+    key_lines = [f"ANSWER KEY — {venue['name']} — {as_date(row['date'])} — set {set_id}"
+                 + (f" — host {host_txt}" if host_txt else ""), ""]
     total_secs = 0
 
     slide_venue_title(deck, venue)
+    host = str(row.get("host", "") or "").strip()
+    if host:
+        slide_host(deck, venue, host)
     slide_bullets(deck, venue, "Trivia Format", [
         "3 Rounds of 15 Questions each.", "60 Seconds for each Question.", "Questions will not be repeated.",
         "Answers will be given and scored after each Round.", "Short intermission after each Round.",
@@ -713,7 +728,7 @@ def build_deck(bank, row, outdir):
     picture(s, ASSETS / "brand/feedback_qr.jpg", 0, 0, W, H)
 
     outdir.mkdir(parents=True, exist_ok=True)
-    stem = f"{as_date(row['date'])} {venue['name']}"
+    stem = f"{as_date(row['date'])} {venue['name']}" + (f" ({host_txt})" if host_txt else "")
     deck.prs.save(outdir / f"{stem}.pptx")
     (outdir / f"{stem} - answer key.txt").write_text("\n".join(key_lines) + "\n")
     return outdir / f"{stem}.pptx", total_secs

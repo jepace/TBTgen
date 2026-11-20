@@ -209,9 +209,10 @@ sheet("Tiebreakers", ["set_id", "order", "question", "answer"], [
 ], [12, 7, 70, 12])
 
 D = dt.date
-sheet("Schedule", ["date", "venue_id", "set_id"], [
-    (D(2026, 11, 23), "wine_press", S), (D(2026, 11, 24), "taproom", S), (D(2026, 11, 25), "pub", S),
-], [12, 14, 12], date_cols=[1])
+sheet("Schedule", ["date", "venue_id", "set_id", "host"], [
+    (D(2026, 11, 23), "wine_press", S, "James"), (D(2026, 11, 24), "taproom", S, "Troy"),
+    (D(2026, 11, 25), "pub", S, "Aaron"),
+], [12, 14, 12, 14], date_cols=[1])
 
 # Pretend history, to show the repeat checks:
 #  - Sample Pub played the Turkey category last December          -> category warning

@@ -30,5 +30,7 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - The user won't use a venv. GUI = `tbtgen_app.py`: stdlib http.server on 127.0.0.1 + a page in the
   browser (Tkinter avoided: missing in Homebrew Python, old/crashy in Apple's). It shells out to
   `build.py --only date:venue,...`; per-launch token guards the API. `TBTgen.command` launches it on a Mac.
-- Pending: fonts/sizing, packaging as a real Mac app, venue logos for all venues, real questions in the sheet.
+- Fonts come from Troy's Keynote template: Trebuchet MS (body), Savoye LET (script titles),
+  Brush Script MT (bonus labels). Savoye is Mac-only. Sizes were guessed without seeing Savoye rendered.
+- Pending: font sizes/layout review on a Mac, packaging as a real Mac app, venue logos for all venues, real questions in the sheet.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

@@ -46,8 +46,11 @@ CACHE = ROOT / "build"
 CONFIG = ROOT / "tbtgen_config.json"   # {"sheet_url": "...", "token": "..."}; not in Git
 
 # ----------------------------------------------------------------- look & feel
-FONT = "Avenir Next"          # Mac font; PowerPoint substitutes if missing
-SCRIPT = "Snell Roundhand"    # the script font used for round / category titles
+# Fonts taken from Troy's Keynote template (TBT Base.key). All three come with macOS; Windows has
+# Trebuchet MS and Brush Script MT, but not Savoye LET (PowerPoint substitutes another font there).
+FONT = "Trebuchet MS"         # questions, answers, headers, rules
+SCRIPT = "Savoye LET"         # script titles: Trivia Night, Round One, category names, host
+BRUSH = "Brush Script MT"     # bonus labels: "Tonight's Bonus Category", "Double Points!"
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 GOLD = RGBColor(0xF5, 0xC2, 0x42)
 W, H = Inches(13.333), Inches(7.5)
@@ -586,16 +589,16 @@ def venue_logo(venue):
 def slide_venue_title(deck, venue):
     s = deck.slide()
     picture(s, venue_logo(venue), Inches(4.4), Inches(0.5), Inches(4.5), Inches(4.0))
-    text(s, 0, Inches(4.6), W, Inches(2), "Trivia Night", size=88, font=SCRIPT, align=PP_ALIGN.CENTER)
+    text(s, 0, Inches(4.6), W, Inches(2), "Trivia Night", size=110, font=SCRIPT, align=PP_ALIGN.CENTER)
 
 
 def slide_host(deck, venue, host):
     """Slide 2: "Tonight's host <name>" in the script font."""
     s = deck.slide()
     header(s, "Trivia Night", venue_logo(venue))
-    text(s, 0, Inches(1.9), W, Inches(1.2), "Tonight’s host", size=54, font=SCRIPT, align=PP_ALIGN.CENTER,
+    text(s, 0, Inches(1.9), W, Inches(1.2), "Tonight’s host", size=64, font=SCRIPT, align=PP_ALIGN.CENTER,
          anchor=MSO_ANCHOR.MIDDLE)
-    text(s, 0, Inches(3.1), W, Inches(2.2), str(host).strip(), size=110, font=SCRIPT, align=PP_ALIGN.CENTER,
+    text(s, 0, Inches(3.1), W, Inches(2.2), str(host).strip(), size=130, font=SCRIPT, align=PP_ALIGN.CENTER,
          anchor=MSO_ANCHOR.MIDDLE, color=GOLD)
 
 
@@ -608,7 +611,7 @@ def slide_bullets(deck, venue, title, items, size=20):
 def slide_script(deck, venue, script, sub="", head="Trivia Night"):
     s = deck.slide()
     header(s, head, venue_logo(venue))
-    text(s, 0, Inches(2.2), W, Inches(1.8), script, size=80, font=SCRIPT, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, 0, Inches(2.2), W, Inches(1.8), script, size=96, font=SCRIPT, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
     if sub:
         text(s, 0, Inches(4.6), W, Inches(0.8), sub, size=24, bold=True, italic=True, align=PP_ALIGN.CENTER)
 
@@ -646,12 +649,12 @@ def slide_results(deck, venue, title, lines=10):
 def slide_category(deck, cat, first_q, bonus):
     s = deck.slide()
     header(s, f"Questions {first_q} - {first_q + 4}", ASSETS / "brand/tbt_logo.png")
-    text(s, Inches(1.2), Inches(2.0), Inches(10.9), Inches(1.8), cat["title"], size=66, font=SCRIPT,
+    text(s, Inches(1.2), Inches(2.0), Inches(10.9), Inches(1.8), cat["title"], size=80, font=SCRIPT,
          align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
     if bonus:
-        text(s, Inches(0.5), Inches(1.4), Inches(4), Inches(1.0), "Tonight’s\nBonus Category", size=26, font=SCRIPT,
+        text(s, Inches(0.5), Inches(1.4), Inches(4), Inches(1.0), "Tonight’s\nBonus Category", size=28, font=BRUSH,
              color=GOLD)
-        text(s, Inches(9.6), Inches(3.9), Inches(3.4), Inches(0.8), "Double Points!", size=30, font=SCRIPT, color=GOLD)
+        text(s, Inches(9.6), Inches(3.9), Inches(3.4), Inches(0.8), "Double Points!", size=32, font=BRUSH, color=GOLD)
     text(s, Inches(0.5), Inches(4.8), Inches(11.5), Inches(1.9), cat["blurb"], size=16, bold=True,
          anchor=MSO_ANCHOR.BOTTOM)
     text(s, Inches(0.5), Inches(6.75), Inches(6), Inches(0.5), "Good Luck!", size=20, bold=True, italic=True)
@@ -721,7 +724,7 @@ def slide_answer(deck, cat, qq, num):
 
 def slide_tiebreaker(deck, venue, tbs, with_answers):
     s = deck.slide()
-    text(s, 0, Inches(0.1), W, Inches(1.1), "Tiebreaker", size=54, font=SCRIPT, align=PP_ALIGN.CENTER)
+    text(s, 0, Inches(0.1), W, Inches(1.1), "Tiebreaker", size=66, font=SCRIPT, align=PP_ALIGN.CENTER)
     picture(s, venue_logo(venue), *LOGO_BOX)
     rules = ("Participating teams should move so that all teams and host are in close proximity – failure to move "
              "results in a forfeit.\nTeams write down their answers for each of these years. The host adds up how many "

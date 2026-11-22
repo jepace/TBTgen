@@ -37,7 +37,8 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   in parallel, then concat). `build.py --video SET_ID` / app Video tab. Countdown = 61 PNG frames of the logo
   filling, overlaid per question. Tested here (fallback fonts); not yet seen on a Mac with the real fonts.
 - App tabs: Nights (set drop-down per night saves to Schedule), Sets (New/Edit set), Categories (create/edit,
-  pick+order 5 questions), Questions (New/Edit, upload pictures/clips to assets/), Video, Files, Status.
+  pick+order 5 questions), Questions (New/Edit, upload pictures/clips to assets/), Venues (add/edit, logo upload to assets/venues/),
+  Video, Files, Settings (labelled form for the Settings tab, int range checks, add keys), Status.
   Writes go through `bank_write.py` (SheetWriter -> web app doPost actions upsert/replace; XlsxWriter for the
   .xlsx); EDITABLE tab/column whitelist is duplicated in bank_write.py and tbtgen_sheet.gs: keep them in sync.
   New IDs are assigned by the writer (Apps Script nextNumber_ / max+1 in xlsx). Tested via Playwright on the xlsx

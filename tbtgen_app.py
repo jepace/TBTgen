@@ -214,8 +214,11 @@ def api_categories():
     return {"categories": out, "lookback_days": lookback, "today": str(dt.date.today())}
 
 
+ASSET_FOLDERS = {"images": "images", "media": "media", "venues": "venues"}
+
+
 def api_assets(kind):
-    folder = ASSETS / ("media" if kind == "media" else "images")
+    folder = ASSETS / ASSET_FOLDERS.get(kind, "images")
     if not folder.exists():
         return {"files": []}
     return {"files": sorted(p.relative_to(ASSETS).as_posix() for p in folder.rglob("*")
@@ -224,12 +227,13 @@ def api_assets(kind):
 
 def save_upload(kind, name, data_url):
     import base64
-    folder = ASSETS / ("media" if kind == "media" else "images")
+    folder = ASSETS / ASSET_FOLDERS.get(kind, "images")
     folder.mkdir(parents=True, exist_ok=True)
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem).strip("._") or "file"
     ext = re.sub(r"[^A-Za-z0-9]", "", Path(name).suffix.lower())[:5]
-    allowed = {"images": {"jpg", "jpeg", "png", "gif", "webp"}, "media": {"mp3", "m4a", "wav", "aac", "mp4", "mov", "m4v"}}
-    if ext not in allowed["media" if kind == "media" else "images"]:
+    pictures = {"jpg", "jpeg", "png", "gif", "webp"}
+    allowed = {"images": pictures, "venues": pictures, "media": {"mp3", "m4a", "wav", "aac", "mp4", "mov", "m4v"}}
+    if ext not in allowed[kind if kind in allowed else "images"]:
         raise ValueError(f"file type .{ext} isn't allowed here")
     raw = base64.b64decode(data_url.split(",", 1)[-1])
     target = folder / f"{stem}.{ext}"
@@ -239,6 +243,44 @@ def save_upload(kind, name, data_url):
         n += 1
     target.write_bytes(raw)
     return target.relative_to(ASSETS).as_posix()
+
+
+def api_venues():
+    bank = get_bank()
+    _, by_c = usage_index(bank)
+    today = str(dt.date.today())
+    nights = defaultdict(list)
+    for r in bank["Schedule"]:
+        if r.get("date") and r.get("venue_id"):
+            nights[r["venue_id"]].append(str(build.as_date(r["date"])))
+    played = defaultdict(set)
+    for u in bank["Usage"]:
+        try:
+            played[u["venue_id"]].add(str(build.as_date(u["date"])))
+        except (ValueError, TypeError):
+            pass
+    out = []
+    for vid, v in bank["venues"].items():
+        if not vid:
+            continue
+        upcoming = sorted(d for d in nights.get(vid, []) if d >= today)
+        logo = str(v.get("logo") or "")
+        out.append({"venue_id": vid, "name": str(v.get("name", "")), "logo": logo,
+                    "logo_ok": bool(logo) and (ASSETS / logo).is_file(), "region": str(v.get("region", "")),
+                    "night": str(v.get("night", "")), "upcoming_nights": str(v.get("upcoming_nights", "")),
+                    "active": str(v.get("active", "")).strip().upper() not in ("N", "NO", "FALSE", "0"),
+                    "calendar_name": str(v.get("calendar_name", "")), "next_night": upcoming[0] if upcoming else "",
+                    "scheduled": len(upcoming), "last_played": max(played.get(vid, {""})),
+                    "games_played": len(played.get(vid, ()))})
+    order = {d: i for i, d in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])}
+    out.sort(key=lambda v: (not v["active"], order.get(v["night"][:3].title(), 9), v["name"].lower()))
+    return {"venues": out}
+
+
+def api_settings():
+    bank = get_bank()
+    return {"settings": [{"key": str(r.get("key", "")), "value": "" if r.get("value") is None else str(r.get("value")),
+                          "meaning": str(r.get("meaning", "") or "")} for r in bank["Settings"] if r.get("key")]}
 
 
 def api_files():
@@ -438,6 +480,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(api_files())
             if u.path == "/api/categories":
                 return self.send_json(api_categories())
+            if u.path == "/api/venues":
+                return self.send_json(api_venues())
+            if u.path == "/api/settings":
+                return self.send_json(api_settings())
             if u.path == "/api/assets":
                 return self.send_json(api_assets(q.get("kind", "images")))
             if u.path == "/api/job":
@@ -618,7 +664,7 @@ dialog .db{padding:16px 18px;overflow:auto;max-height:calc(90vh - 130px)}dialog 
 .f{display:grid;grid-template-columns:150px 1fr;gap:10px 14px;align-items:start}.f>label{padding-top:7px;color:var(--muted);font-size:14px}
 .f input[type=text],.f textarea,.f select{width:100%;font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
 .f textarea{min-height:76px;resize:vertical}
-dialog input[type=text]{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}.f .hint{font-size:12px;color:var(--muted);margin-top:3px}
+.pickrow input[type=text],dialog input[type=text]{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}.f .hint{font-size:12px;color:var(--muted);margin-top:3px}
 .pickrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.pickrow input[type=text]{flex:1;min-width:160px}.pickrow img{height:46px;border-radius:6px}
 .slot{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px dashed var(--line)}.slot .n{width:22px;color:var(--muted);font-weight:600;padding-top:2px}
 .slot .t{flex:1}.slot button{padding:2px 8px;font-size:13px}
@@ -635,8 +681,8 @@ select.setpick{font-size:13px;padding:3px 6px}
 <header><h1><b>TBT</b>gen</h1><span class="pill" id="source">…</span><span class="pill busy hidden" id="busy" title="Show progress"></span>
 <span class="spacer"></span><button id="reloadData" title="Read the spreadsheet again">Reload data</button>
 <button id="openSheet" class="hidden">Open spreadsheet</button><button id="quit" title="Stop TBTgen">Quit</button></header>
-<nav id="tabs"><a data-tab="nights">Nights</a><a data-tab="sets">Sets</a><a data-tab="categories">Categories</a><a data-tab="questions">Questions</a>
-<a data-tab="video">Video</a><a data-tab="files">Files</a><a data-tab="status">Status</a></nav>
+<nav id="tabs"><a data-tab="nights">Nights</a><a data-tab="sets">Sets</a><a data-tab="categories">Categories</a><a data-tab="questions">Questions</a><a data-tab="venues">Venues</a>
+<a data-tab="video">Video</a><a data-tab="files">Files</a><a data-tab="settings">Settings</a><a data-tab="status">Status</a></nav>
 <div id="notes"></div>
 
 <!-- ============================== NIGHTS -->
@@ -683,6 +729,27 @@ select.setpick{font-size:13px;padding:3px 6px}
   <p class="muted small" style="margin:10px 0 0">Click a question for details and Edit. Changes are saved straight to the spreadsheet.</p></div>
 <div class="card" style="padding:6px 16px"><table><thead><tr><th class="hide-sm"></th><th>ID</th><th>Question</th><th>Answer</th>
   <th class="hide-sm">Categories</th><th class="hide-sm">Asked</th></tr></thead><tbody id="qRows"></tbody></table></div>
+</section>
+
+<!-- ============================== VENUES -->
+<section data-pane="venues" class="hidden">
+<div class="card"><div class="row"><input type="search" id="vnSearch" placeholder="Search venues…">
+  <label class="row small" style="gap:5px"><input type="checkbox" id="vnInactive"> show inactive</label>
+  <span class="muted small" id="vnCount"></span><span class="spacer"></span><button class="primary" id="newVenue">New venue</button></div>
+  <p class="muted small" style="margin:10px 0 0">The calendar name must match how the venue is written in calendar events (“<i>Calendar name</i> - Host”).
+  Venues without a logo use the Trivia By Troy logo.</p></div>
+<div class="card" style="padding:6px 16px"><table><thead><tr><th></th><th>Venue</th><th>Night</th><th class="hide-sm">Calendar name</th>
+  <th class="hide-sm">Region</th><th class="hide-sm">Next night</th></tr></thead><tbody id="vnRows"></tbody></table></div>
+</section>
+
+<!-- ============================== SETTINGS -->
+<section data-pane="settings" class="hidden">
+<div class="card"><h2>Settings</h2><p class="muted small" style="margin-top:0">These live on the spreadsheet's Settings tab and apply to every deck and video.</p>
+  <div class="f" id="stForm"><div class="empty">Loading…</div></div>
+  <div class="row" style="margin-top:14px"><button class="primary" id="stSave" disabled>Save changes</button><span class="muted small" id="stDirty"></span></div></div>
+<div class="card"><h2>Add a setting</h2><div class="pickrow"><input type="text" id="stNewKey" placeholder="key (e.g. video_media_extra_seconds)">
+  <input type="text" id="stNewVal" placeholder="value" style="max-width:160px"><input type="text" id="stNewMeaning" placeholder="what it's for (optional)">
+  <button id="stAdd">Add</button></div><div class="hint muted small" style="margin-top:6px">Known extras: <span class="mono">video_media_extra_seconds</span> (seconds after a clip in videos, default 10).</div></div>
 </section>
 
 <!-- ============================== VIDEO -->
@@ -754,7 +821,7 @@ const fmtLen=s=>`${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,"0")}
 function showTab(t){if(!$(`[data-pane="${t}"]`))t="nights";store.set("tab",t);
   $$("nav a").forEach(a=>a.classList.toggle("on",a.dataset.tab===t));$$("[data-pane]").forEach(p=>p.classList.toggle("hidden",p.dataset.pane!==t));
   if(location.hash!=="#"+t)history.replaceState(null,"","#"+t);
-  ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,categories:loadCats,questions:()=>S.loaded.q||loadQuestions(),video:loadVideoTab,files:loadFiles,status:loadStatus}[t]||(()=>{}))()}
+  ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,categories:loadCats,questions:()=>S.loaded.q||loadQuestions(),venues:loadVenues,video:loadVideoTab,files:loadFiles,settings:loadSettings,status:loadStatus}[t]||(()=>{}))()}
 $$("nav a").forEach(a=>a.onclick=()=>showTab(a.dataset.tab));
 
 /* ---------- nights ---------- */
@@ -888,7 +955,7 @@ async function loadStatus(){const s=await get("/api/status");const ok=b=>b?'<spa
   if(s.assets_missing&&s.assets_missing.length)html+=`<div class="card note">Files referenced by questions but not in the assets folder:<br><span class="mono">${s.assets_missing.map(esc).join("<br>")}</span></div>`;
   if(s.fonts)html+=`<div class="card"><h2>Video fonts</h2><p class="muted small" style="margin-top:0">Decks use Trebuchet MS, Savoye LET and Brush Script MT by name. Videos draw text themselves with these font files:</p>
     <div class="kv">${Object.entries(s.fonts).map(([k,v])=>`<div>${esc(k)}</div><div class="mono">${esc(v)}</div>`).join("")}</div></div>`;
-  if(s.settings)html+=`<div class="card"><h2>Settings tab</h2><div class="kv">${Object.entries(s.settings).map(([k,v])=>`<div class="mono">${esc(k)}</div><div>${esc(v)}</div>`).join("")}</div></div>`;
+  if(s.settings)html+=`<div class="card"><h2>Settings tab <button class="sm" onclick="showTab('settings')" style="margin-left:8px">Edit</button></h2><div class="kv">${Object.entries(s.settings).map(([k,v])=>`<div class="mono">${esc(k)}</div><div>${esc(v)}</div>`).join("")}</div></div>`;
   $("#statusBody").innerHTML=html;
   $("#testConn").onclick=async()=>{$("#testRes").textContent="Reading…";const r=await post("/api/reload");
     const msg=r.error?`<span class="bad-i">✗ ${esc(r.error)}</span>`:`<span class="ok-i">✓ read ${esc(r.source)} at ${esc(r.loaded_at)}</span>`;
@@ -905,8 +972,8 @@ function dialog(which,title,bodyHtml,buttons){const d=$(which==2?"#dlg2":"#dlg")
   d.querySelectorAll("[data-close]").forEach(x=>x.onclick=()=>d.close());if(!d.open)d.showModal();return d}
 const val=(root,sel)=>root.querySelector(sel).value.trim();
 async function assetPicker(root,name,kind,current){const box=root.querySelector(`[data-asset="${name}"]`);
-  const list=(await get("/api/assets?kind="+kind)).files||[];const dl=`dl_${name}_${Math.random().toString(36).slice(2,7)}`;
-  box.innerHTML=`<div class="pickrow"><input type="text" list="${dl}" value="${esc(current)}" placeholder="${kind==="media"?"media/clip.mp3":"images/picture.jpg"}">
+  const list=(await get("/api/assets?kind="+kind)).files||[];const ph={media:"media/clip.mp3",venues:"venues/logo.png"}[kind]||"images/picture.jpg";const dl=`dl_${name}_${Math.random().toString(36).slice(2,7)}`;
+  box.innerHTML=`<div class="pickrow"><input type="text" list="${dl}" value="${esc(current)}" placeholder="${ph}">
     <datalist id="${dl}">${list.map(f=>`<option value="${esc(f)}">`).join("")}</datalist>
     <label class="btn" style="border:1px solid var(--line);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:14px">Upload…<input type="file" hidden accept="${kind==="media"?"audio/*,video/*":"image/*"}"></label>
     <button type="button" class="sm" data-clear>Clear</button><span class="pv"></span></div>`;
@@ -915,7 +982,7 @@ async function assetPicker(root,name,kind,current){const box=root.querySelector(
   inp.oninput=show;box.querySelector("[data-clear]").onclick=()=>{inp.value="";show()};show();
   box.querySelector("input[type=file]").onchange=async e=>{const f=e.target.files[0];if(!f)return;pv.textContent="Uploading…";
     const data=await new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.readAsDataURL(f)});
-    const r=await post("/api/upload",{kind:kind==="media"?"media":"images",name:f.name,data});
+    const r=await post("/api/upload",{kind,name:f.name,data});
     if(r.error){toast(r.error,true);show();return}inp.value=r.path;show();toast("Uploaded "+r.path)};
   return ()=>inp.value.trim()}
 async function editQuestion(q,after,which){q=q||{};const isNew=!q.id;
@@ -1032,6 +1099,86 @@ async function editSet(set){const isNew=!set;const cr=await get("/api/categories
   d.querySelectorAll("[data-slot],input[name=bonus]").forEach(x=>x.onchange=warn);warn()}
 
 $("#newQ").onclick=()=>editQuestion(null,()=>loadQuestions());
+
+/* venues */
+async function loadVenues(){const r=await get("/api/venues").catch(e=>({error:String(e)}));
+  if(r.error){$("#vnRows").innerHTML=`<tr><td colspan="6" class="empty">${esc(r.error)}</td></tr>`;return}S.venues=r.venues;renderVenues()}
+function renderVenues(){const q=$("#vnSearch").value.toLowerCase(),all=$("#vnInactive").checked;
+  const vs=(S.venues||[]).filter(v=>(all||v.active)&&`${v.venue_id} ${v.name} ${v.calendar_name} ${v.region}`.toLowerCase().includes(q));
+  $("#vnCount").textContent=`${vs.length} venue${vs.length==1?"":"s"}`;
+  $("#vnRows").innerHTML=vs.length?vs.map(v=>`<tr class="click${v.active?"":" dim"}" data-vid="${esc(v.venue_id)}">
+    <td style="width:70px">${v.logo_ok?`<img class="thumb" style="width:56px;height:56px;object-fit:contain;background:#000" src="${assetUrl(v.logo)}" alt="">`:'<span class="tag warn">no logo</span>'}</td>
+    <td><strong>${esc(v.name)}</strong> <span class="mono muted">${esc(v.venue_id)}</span>${v.active?"":' <span class="tag">inactive</span>'}
+      <div class="small muted">${v.games_played?`${v.games_played} game${v.games_played>1?"s":""} logged · last ${fmtDate(v.last_played)}`:"no games logged yet"}</div></td>
+    <td>${esc(v.night)||'<span class="muted">—</span>'}</td><td class="hide-sm">${esc(v.calendar_name)||'<span class="tag bad">missing</span>'}</td>
+    <td class="hide-sm">${esc(v.region)||'<span class="muted">—</span>'}</td>
+    <td class="hide-sm small">${v.next_night?`${fmtDate(v.next_night)}${v.scheduled>1?` <span class="muted">(+${v.scheduled-1} more)</span>`:""}`:'<span class="muted">none scheduled</span>'}</td></tr>`).join("")
+    :`<tr><td colspan="6" class="empty">No venues match.</td></tr>`;
+  $$("#vnRows tr.click").forEach(tr=>tr.onclick=()=>editVenue(S.venues.find(v=>v.venue_id===tr.dataset.vid)))}
+$("#vnSearch").oninput=renderVenues;$("#vnInactive").onchange=renderVenues;$("#newVenue").onclick=()=>editVenue(null);
+const slug=s=>s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g,"").replace(/&/g," and ").replace(/['’]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,30);
+async function editVenue(v){const isNew=!v;v=v||{active:true,night:""};let idTouched=false;
+  const days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const d=dialog(1,isNew?"New venue":`Edit ${v.name}`,`<div class="f">
+    <label>Name</label><div><input type="text" data-f="name" value="${esc(v.name)}" placeholder="e.g. Pop's Public House"><div class="hint">Shown on the decks</div></div>
+    <label>Venue ID</label><div><input type="text" data-f="venue_id" value="${esc(v.venue_id)}" ${isNew?"":"readonly"} placeholder="e.g. pops">
+      <div class="hint">${isNew?"Short code used by the schedule and history (letters, numbers, _). Can't be changed later.":"Can't be changed: the schedule and history refer to it."}</div></div>
+    <label>Calendar name</label><div><input type="text" data-f="calendar_name" value="${esc(v.calendar_name)}" placeholder="e.g. Pop's">
+      <div class="hint">Exactly how the venue starts its calendar events: “<b>${esc(v.calendar_name||"Pop's")}</b> - Host”</div></div>
+    <label>Logo</label><div data-asset="vlogo"></div>
+    <label>Night</label><div><select data-f="night"><option value="">—</option>${days.map(x=>`<option${String(v.night).slice(0,3).toLowerCase()===x.toLowerCase()?" selected":""}>${x}</option>`).join("")}</select></div>
+    <label>Region</label><div><input type="text" data-f="region" value="${esc(v.region)}" placeholder="e.g. North (optional)">
+      <div class="hint">Venues in the same region get a warning if they share questions on back-to-back nights</div></div>
+    <label>Upcoming nights</label><div><textarea data-f="upcoming_nights" placeholder="One per line, e.g.&#10;December 2nd&#10;December 9th">${esc(v.upcoming_nights)}</textarea>
+      <div class="hint">Shown on the deck's “Upcoming Trivia Nights” slide</div></div>
+    <label>Active</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="active" ${v.active?"checked":""}> currently hosting trivia</label></div></div>`,
+    [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Add venue":"Save","primary",async dd=>{
+      const vals={name:val(dd,'[data-f=name]'),calendar_name:val(dd,'[data-f=calendar_name]'),logo:getLogo(),night:val(dd,'[data-f=night]'),
+        region:val(dd,'[data-f=region]'),upcoming_nights:dd.querySelector('[data-f=upcoming_nights]').value.replace(/\s+$/,""),active:dd.querySelector('[data-f=active]').checked?"Y":"N"};
+      const id=val(dd,'[data-f=venue_id]');
+      if(!vals.name||!id){toast("A venue needs a name and an ID",true);return}
+      if(isNew&&!/^[a-z0-9_]+$/.test(id)){toast("Use only lower-case letters, numbers and _ in the venue ID",true);return}
+      if(isNew&&(S.venues||[]).some(x=>x.venue_id===id)){toast(`There's already a venue with ID ${id}`,true);return}
+      const clash=(S.venues||[]).find(x=>x.venue_id!==id&&vals.calendar_name&&x.calendar_name.toLowerCase()===vals.calendar_name.toLowerCase());
+      if(clash){toast(`${clash.name} already uses the calendar name “${vals.calendar_name}”`,true);return}
+      if(!await edit({op:"upsert",tab:"Venues",key:{venue_id:id},values:vals}))return;
+      toast(isNew?`Added ${vals.name}`:`Saved ${vals.name}`);dd.close();loadVenues()}]]);
+  let getLogo=()=>v.logo||"";
+  if(isNew){const nm=d.querySelector('[data-f=name]'),idf=d.querySelector('[data-f=venue_id]'),cal=d.querySelector('[data-f=calendar_name]');let calTouched=false;
+    idf.oninput=()=>idTouched=true;cal.oninput=()=>calTouched=true;
+    nm.oninput=()=>{if(!idTouched)idf.value=slug(nm.value);if(!calTouched)cal.value=nm.value}}
+  getLogo=await assetPicker(d,"vlogo","venues",v.logo||"")}
+
+/* settings */
+const KNOWN_SETTINGS={
+  default_seconds:{label:"Seconds per question",type:"int",min:10,max:600,help:"How long each question slide stays up in the decks (and the logo countdown)."},
+  media_extra_seconds:{label:"Extra seconds after a clip",type:"int",min:0,max:300,help:"Music/movie question slides last the clip length plus this, unless a question sets its own seconds."},
+  repeat_lookback_days:{label:"Repeat warning window (days)",type:"int",min:1,max:3650,help:"Warn when a venue saw a category or question within this many days."},
+  video_media_extra_seconds:{label:"Video: extra seconds after a clip",type:"int",min:0,max:300,help:"In at-home videos, time to answer after a song or movie clip ends."},
+  company_name:{label:"Company name",type:"text",help:""},
+  instagram:{label:"Instagram handle",type:"text",help:"Shown on the Upcoming Trivia Nights slide and the video's end card."},
+  facebook:{label:"Facebook page",type:"text",help:"Shown on the Upcoming Trivia Nights slide and the video's end card."},
+  calendar_id:{label:"Google Calendar ID",type:"text",help:"Used by TBTgen → Pull schedule from calendar in the sheet. Ends in @group.calendar.google.com."}};
+async function loadSettings(){const r=await get("/api/settings").catch(e=>({error:String(e)}));
+  if(r.error){$("#stForm").innerHTML=`<div class="note bad">${esc(r.error)}</div>`;return}S.settings=r.settings;
+  $("#stForm").innerHTML=r.settings.map(st=>{const k=KNOWN_SETTINGS[st.key]||{label:st.key,type:"text",help:st.meaning};
+    return `<label title="${esc(st.key)}">${esc(k.label)}</label><div><input type="text" data-key="${esc(st.key)}" data-type="${k.type}" value="${esc(st.value)}"
+      ${k.type==="int"?`inputmode="numeric" style="max-width:140px"`:""}><div class="hint"><span class="mono">${esc(st.key)}</span>${k.help||st.meaning?" · "+esc(k.help||st.meaning):""}</div></div>`}).join("")||'<div class="muted">The Settings tab is empty.</div>';
+  $$("#stForm input").forEach(i=>i.oninput=markDirty);markDirty()}
+function changedSettings(){return $$("#stForm input").filter(i=>{const st=S.settings.find(x=>x.key===i.dataset.key);return st&&i.value.trim()!==st.value})}
+function markDirty(){const ch=changedSettings();$("#stSave").disabled=!ch.length;$("#stDirty").textContent=ch.length?`${ch.length} unsaved change${ch.length>1?"s":""}`:""}
+$("#stSave").onclick=async()=>{const ch=changedSettings();
+  for(const i of ch){const k=KNOWN_SETTINGS[i.dataset.key];if(k&&k.type==="int"){const n=Number(i.value.trim());
+    if(!Number.isInteger(n)||n<k.min||n>k.max){toast(`${k.label} must be a whole number from ${k.min} to ${k.max}`,true);i.focus();return}}}
+  $("#stSave").disabled=true;
+  for(const i of ch){const k=KNOWN_SETTINGS[i.dataset.key];const v=k&&k.type==="int"?Number(i.value.trim()):i.value.trim();
+    if(!await edit({op:"upsert",tab:"Settings",key:{key:i.dataset.key},values:{value:v}})){markDirty();return}}
+  toast(`Saved ${ch.length} setting${ch.length>1?"s":""}`);loadSettings()};
+$("#stAdd").onclick=async()=>{const key=$("#stNewKey").value.trim(),v=$("#stNewVal").value.trim(),m=$("#stNewMeaning").value.trim();
+  if(!/^[a-z0-9_]+$/.test(key)){toast("Setting keys use lower-case letters, numbers and _",true);return}
+  if((S.settings||[]).some(x=>x.key===key)){toast(`${key} is already there: change it above`,true);return}
+  const r=await edit({op:"upsert",tab:"Settings",key:{key},values:{value:/^\d+$/.test(v)?Number(v):v,meaning:m}});if(!r)return;
+  ["#stNewKey","#stNewVal","#stNewMeaning"].forEach(x=>$(x).value="");toast(`Added ${key}`);loadSettings()};
 
 /* ---------- runs (shared) ---------- */
 function cls(l){return/^(ERROR|Stopped|Google Sheet:|Traceback|Video failed|Nothing to build)/.test(l)?"ln-err":/^WARNING/.test(l)?"ln-warn":/^built/.test(l)?"ln-ok":/^(SKIPPED|NOTE)/.test(l)?"ln-skip":""}

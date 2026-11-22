@@ -68,6 +68,9 @@ Double-click **TBTgen.command** (or run `python3 tbtgen_app.py`); your browser o
 - **Questions**: search the bank (text, answer, ID) or filter by category; click for pictures, clips and history;
   **New question / Edit question**, including uploading pictures and clips into the assets folder.
 - On **Nights**, each night has a set drop-down: picking one saves it to the Schedule tab.
+- **Venues**: list, add and edit venues (name, calendar name, logo upload, night, region, upcoming nights, active).
+  New venues get an ID and calendar name suggested from the name; duplicate IDs/calendar names are refused.
+- **Settings**: edit the Settings tab with plain-English labels and range checks, or add a new setting.
 
 Everything you edit in the app is saved straight to the spreadsheet (the Google Sheet through its web app, or
 trivia_bank.xlsx). After updating `tbtgen_sheet.gs`, redeploy it (Deploy → Manage deployments → edit → Version:

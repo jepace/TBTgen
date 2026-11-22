@@ -25,6 +25,7 @@ EDITABLE = {
     "Tiebreakers": ["set_id", "order", "question", "answer"],
     "Schedule": ["date", "venue_id", "set_id", "host", "calendar_event"],
     "Venues": ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active", "calendar_name"],
+    "Settings": ["key", "value", "meaning"],
 }
 ID_RULES = {"Questions": ("Q", 5), "Categories": ("C", 4)}
 

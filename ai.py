@@ -225,10 +225,17 @@ class Gemini:
         return self._errors(names)
 
 
-def provider(settings):
+def provider(settings, effort=None):
     o = options(settings)
+    if effort:
+        o["effort"] = effort
     cls = Anthropic if o["provider"] == "anthropic" else Gemini
     return cls(api_key(o["provider"]), o["model"], o["effort"]), o
+
+
+def gen_line(gens):
+    gens = build.parse_gens(gens)
+    return ", ".join(f"{g} (born {build.GEN_YEARS[g]})" for g in gens)
 
 
 # ------------------------------------------------------------------------------------------- usage log
@@ -350,13 +357,16 @@ Rules for every question:
 - Match the length and voice of the examples. Vary the answer types.
 - Don't repeat or closely paraphrase any of the existing questions listed.
 
+- If a target audience is given, pick facts, people, songs, shows and events those generations grew up with or follow now, and phrase things so they land with them.
+- Tag each question with the generations likely to know the answer: Boomer (born 1946-64), Gen X (1965-80), Millennial (1981-96), Gen Z (1997-2012), Gen Alpha (2013+).
+
 Also write a category intro blurb in the same playful voice as the example blurbs (one or two sentences, usually ending with an ellipsis).
 
 Reply with only a JSON object and no other text:
-{{"blurb": "<category intro>", "questions": [{{"question": "...", "answer": "...", "accept_also": ["..."], "fun_fact": "<one sentence the host can share>", "difficulty": "easy" | "medium" | "hard", "picture_idea": "<a photo that would suit the slide without giving the answer away, or empty>", "sources": ["<URL you relied on>"]}}]}}"""
+{{"blurb": "<category intro>", "questions": [{{"question": "...", "answer": "...", "accept_also": ["..."], "fun_fact": "<one sentence the host can share>", "difficulty": "easy" | "medium" | "hard", "picture_idea": "<a photo that would suit the slide without giving the answer away, or empty>", "generations": ["Boomer" | "Gen X" | "Millennial" | "Gen Z" | "Gen Alpha"], "sources": ["<URL you relied on>"]}}]}}"""
 
 
-def generate(bank, topic, count=5, difficulty="mixed", notes="", ctype="standard"):
+def generate(bank, topic, count=5, difficulty="mixed", notes="", ctype="standard", generations=None):
     prov, o = provider(bank["settings"])
     topic = _s(topic)
     if not topic:
@@ -378,6 +388,8 @@ def generate(bank, topic, count=5, difficulty="mixed", notes="", ctype="standard
     elif ctype == "movie":
         parts.append("This is a Movies category: each question is 'What movie is this scene from?' with a clip; "
                      "suggest movies that fit the topic, with the answer as 'Title (year)'.")
+    if build.parse_gens(generations):
+        parts.append(f"Target audience: {gen_line(generations)}")
     if _s(notes):
         parts.append(f"Notes from the host: {_s(notes)}")
     parts += ["", "Example questions in our style:"] + [f"- Q: {_s(q['question'])}  A: {_s(q['answer'])}" for q in examples]
@@ -394,13 +406,85 @@ def generate(bank, topic, count=5, difficulty="mixed", notes="", ctype="standard
         d = _s(q.get("difficulty")).lower()
         qs.append({"question": _s(q["question"]), "answer": _s(q["answer"]), "accept_also": _list(q.get("accept_also")),
                    "fun_fact": _s(q.get("fun_fact")), "difficulty": d if d in ("easy", "medium", "hard") else "",
-                   "picture_idea": _s(q.get("picture_idea")),
+                   "picture_idea": _s(q.get("picture_idea")), "generations": build.parse_gens(q.get("generations")),
                    "sources": [u for u in _list(q.get("sources")) if u.startswith(("http://", "https://"))][:5]})
     if not qs:
         raise AIError("the AI didn't return any usable questions: try again or reword the topic")
     rec = log_usage("generate", o["provider"], usage, len(qs))
     return {"blurb": _s(data.get("blurb")), "questions": qs, "provider": prov.name, "model": usage["model"],
             "web": o["web"], "cost_usd": rec["cost_usd"], "web_searches": usage["web_searches"]}
+
+
+# ------------------------------------------------------------------------------- generations tagging
+TAG_SYSTEM = """You help a bar trivia company balance its games across age groups. For each trivia question, decide which generations of American adults (and kids, for family nights) are likely to know the answer or get the reference:
+Boomer (born 1946-64), Gen X (1965-80), Millennial (1981-96), Gen Z (1997-2012), Gen Alpha (2013+).
+
+Tag a generation when a typical member would plausibly know it from their own life and culture. Evergreen general knowledge (science, geography, holidays, long-running classics) gets every generation old enough to know it. Be realistic: an 80s hit is Boomer/Gen X/older Millennial; a 2020s TikTok trend is Gen Z/Gen Alpha. Most questions get 1-4 tags.
+
+Reply with only a JSON object and no other text:
+{"results": [{"id": "<question id>", "generations": ["Boomer" | "Gen X" | "Millennial" | "Gen Z" | "Gen Alpha"], "why": "<a few words>"}]}"""
+
+
+def tag_generations(bank, qids):
+    """Suggests generation tags. Cheap: low effort, no web search."""
+    prov, o = provider(bank["settings"], effort="low")
+    qs = [(qid, bank["qs"][qid]) for qid in qids if qid in bank["qs"]]
+    if not qs:
+        raise AIError("no questions to tag")
+    lines = ["Tag these trivia questions:", ""]
+    for qid, q in qs:
+        lines += [f"ID: {qid}", f"Question: {_s(q['question'])}", f"Answer: {_s(q['answer'])}", ""]
+    text, usage = prov.run(TAG_SYSTEM, "\n".join(lines).strip(), False)
+    data = extract_json(text)
+    got = {_s(r.get("id")): r for r in data.get("results") or []}
+    results = []
+    for qid, q in qs:
+        r = got.get(qid, {})
+        results.append({"id": qid, "question": _s(q["question"]), "answer": _s(q["answer"]),
+                        "current": build.parse_gens(q.get("generations")), "suggested": build.parse_gens(r.get("generations")),
+                        "why": _s(r.get("why")), "missing": qid not in got})
+    rec = log_usage("tag", o["provider"], usage, len(qs))
+    return {"results": results, "provider": prov.name, "model": usage["model"], "cost_usd": rec["cost_usd"]}
+
+
+# ------------------------------------------------------------------------------------ category ideas
+IDEAS_SYSTEM = """You brainstorm category ideas for Trivia By Troy, a live bar trivia company. A category is a themed group of 5 questions with a short title and a playful intro blurb read by the host. Games have 9 categories, including one Music category (name the song) and sometimes a Movies category (name the movie from a clip).
+
+Give fresh, varied, specific ideas (not just "History" or "Sports"): clever angles, wordplay, seasonal hooks, crossovers between topics. Don't repeat or closely resemble the existing categories listed. Don't write the questions; just the idea.
+
+Reply with only a JSON object and no other text:
+{"ideas": [{"title": "<short, catchy>", "blurb": "<one or two sentences in a playful host voice, usually ending with an ellipsis>", "type": "standard" | "music" | "movie", "angle": "<one line on what the 5 questions would cover>", "generations": ["Boomer" | "Gen X" | "Millennial" | "Gen Z" | "Gen Alpha"], "season": "<month or holiday it suits, or empty>"}]}"""
+
+
+def category_ideas(bank, theme="", count=10, generations=None, notes=""):
+    prov, o = provider(bank["settings"])
+    count = max(3, min(int(count or 10), 20))
+    existing = sorted({_s(c.get("title")) for c in bank["cats"].values() if _s(c.get("title"))})
+    blurbs = [_s(c.get("blurb")) for c in bank["cats"].values() if _s(c.get("blurb")) and _s(c.get("type")) in ("", "standard")]
+    parts = [f"Number of ideas: {count}", f"Theme or occasion: {_s(theme) or 'anything (a varied mix)'}",
+             f"Today's date: {dt.date.today():%B %d, %Y}"]
+    if build.parse_gens(generations):
+        parts.append(f"Target audience: {gen_line(generations)}. Make the ideas land with them.")
+    if _s(notes):
+        parts.append(f"Notes from the host: {_s(notes)}")
+    parts += ["", "Example blurbs in our voice:"] + [f"- {b}" for b in random.Random(theme).sample(blurbs, min(5, len(blurbs)))]
+    parts += ["", "Existing categories (don't repeat these):"] + [f"- {t}" for t in existing]
+    text, usage = prov.run(IDEAS_SYSTEM, "\n".join(parts), False)
+    data = extract_json(text)
+    ideas = []
+    taken = {t.lower() for t in existing}
+    for i in data.get("ideas") or []:
+        title = _s(i.get("title"))
+        if not title or title.lower() in taken:
+            continue
+        t = _s(i.get("type")).lower()
+        ideas.append({"title": title, "blurb": _s(i.get("blurb")), "type": t if t in ("standard", "music", "movie") else "standard",
+                      "angle": _s(i.get("angle")), "generations": build.parse_gens(i.get("generations")),
+                      "season": _s(i.get("season"))})
+    if not ideas:
+        raise AIError("the AI didn't return any usable ideas: try again")
+    rec = log_usage("ideas", o["provider"], usage, len(ideas))
+    return {"ideas": ideas, "provider": prov.name, "model": usage["model"], "cost_usd": rec["cost_usd"]}
 
 
 def list_models(settings, which=None):

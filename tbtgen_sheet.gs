@@ -276,13 +276,13 @@ function doGet(e) {
  */
 const EDITABLE = {
   Questions: ['question_id', 'question', 'answer', 'question_image', 'answer_image', 'media', 'clip_start', 'clip_end',
-              'seconds', 'retired', 'notes'],
+              'seconds', 'retired', 'notes', 'generations'],
   Categories: ['category_id', 'title', 'blurb', 'type', 'season_tag', 'retired', 'notes'],
   CategoryQuestions: ['category_id', 'position', 'question_id'],
   Sets: ['set_id', 'round', 'slot', 'category_id', 'bonus'],
   Tiebreakers: ['set_id', 'order', 'question', 'answer'],
   Schedule: ['date', 'venue_id', 'set_id', 'host', 'calendar_event'],
-  Venues: ['venue_id', 'name', 'logo', 'region', 'night', 'upcoming_nights', 'active', 'calendar_name'],
+  Venues: ['venue_id', 'name', 'logo', 'region', 'night', 'upcoming_nights', 'active', 'calendar_name', 'audience'],
   Settings: ['key', 'value', 'meaning'],
 };
 

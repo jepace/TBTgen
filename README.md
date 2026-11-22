@@ -82,6 +82,16 @@ New version) or the app's saves will be refused. Uploaded pictures/clips go into
 The first time, macOS may refuse to open a downloaded .command file: right-click it → Open → Open.
 Leave the Terminal window open while using the app; close it or click Quit to stop.
 
+## Balancing for the crowd (generations)
+Questions have a **generations** tag (Boomer 1946–64, Gen X 1965–80, Millennial 1981–96, Gen Z 1997–2012,
+Gen Alpha 2013+) meaning "likely to know it". Tick them in the question editor or use **Tag ages with AI**.
+Venues have an **audience** (who usually plays there). Then:
+- each set shows an **Age mix** (how many of its questions each generation is likely to know), live in the set editor too;
+- the Nights tab shows each venue's audience and flags "⚠ light on Gen Z" when under a quarter of the set's
+  tagged questions suit part of that venue's audience;
+- the Questions tab can filter by generation (or "Not tagged yet");
+- Generate with AI and Category ideas can aim at chosen generations.
+
 ## AI assistant (optional)
 Runs **only** when you click **Check with AI** (on a question, in a category's editor, or on a set) or
 **Generate with AI…** (in a category's editor). It suggests; nothing changes until you accept.
@@ -90,6 +100,10 @@ Runs **only** when you click **Check with AI** (on a question, in a category's e
   sources; **Use suggestion…** opens the question editor pre-filled.
 - **Generate**: a topic, how many, difficulty and notes → candidate questions in your style (it's shown examples
   from your bank and the existing questions to avoid), plus a category blurb. Tick the ones to keep.
+- **Category ideas with AI…** (Categories tab): titles, blurbs and a one-line angle to spark thinking, for an
+  optional theme and audience; no questions are written. **Create category…** turns an idea into a new, empty category.
+- **Tag ages with AI** (category editor, or a set): suggests which generations are likely to know each question;
+  adjust the ticks and **Save tags**. Cheap: low effort, no web search.
 - Providers: **Claude** (Anthropic; default model claude-opus-5-5) or **Gemini** (Google; pick a model with
   List models). Set up on the Settings tab → AI assistant: provider, model, effort, web fact-checking, API keys.
 - Install the package for the provider you use:

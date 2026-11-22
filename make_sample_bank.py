@@ -60,13 +60,14 @@ sheet("Settings", ["key", "value", "meaning"], [
 ], [24, 18, 80])
 
 # ---------------------------------------------------------------- Venues
-sheet("Venues", ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active", "calendar_name"], [
+sheet("Venues", ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active", "calendar_name", "audience"], [
     ("wine_press", "101 Wine Press", "venues/101_wine_press.jpg", "North", "Wed",
-     "November 25th No Trivia - Happy Thanksgiving!\nDecember 2nd\nDecember 9th", "Y", "101 Wine Press"),
+     "November 25th No Trivia - Happy Thanksgiving!\nDecember 2nd\nDecember 9th", "Y", "101 Wine Press", "Gen X, Millennial"),
     ("taproom", "Sample Taproom", "venues/sample_taproom.png", "South", "Tue", "December 1st\nDecember 8th", "Y",
-     "Sample Taproom"),
-    ("pub", "Sample Pub", "venues/sample_pub.png", "North", "Wed", "December 3rd\nDecember 10th", "Y", "Sample Pub"),
-], [14, 22, 30, 10, 8, 50, 8, 22])
+     "Sample Taproom", "Millennial, Gen Z"),
+    ("pub", "Sample Pub", "venues/sample_pub.png", "North", "Wed", "December 3rd\nDecember 10th", "Y", "Sample Pub",
+     "Boomer, Gen X"),
+], [14, 22, 30, 10, 8, 50, 8, 22, 22])
 
 # ---------------------------------------------------------------- Categories
 cats = [
@@ -182,10 +183,28 @@ sheet("Categories", ["category_id", "title", "blurb", "type", "season_tag", "ret
       auto=[("(auto) questions", '=IF($A{r}="","",COUNTIF(CategoryQuestions!$A:$A,$A{r}))'),
             ("(auto) last played", '=IF($A{r}="","",IF(COUNTIF(Usage!$D:$D,$A{r})=0,"",MAXIFS(Usage!$A:$A,Usage!$D:$D,$A{r})))')])
 
+# Who is likely to know each question (sample tags; the app's "Tag ages with AI" can suggest these)
+ALL = "Boomer, Gen X, Millennial, Gen Z"
+GEN = {("turkey", n): ALL for n in range(1, 6)}
+GEN.update({("tg_potluck", n): "Boomer, Gen X, Millennial" for n in range(1, 6)})
+GEN.update({("potluck_1", n): ALL for n in range(1, 6)})
+GEN.update(dict(zip([("tg_mishaps", n) for n in range(1, 6)], [
+    "Boomer, Gen X, Millennial", "Millennial, Gen Z", "Gen X, Millennial", "Boomer", "Millennial"])))
+GEN.update(dict(zip([("nov_bdays", n) for n in range(1, 6)], [
+    "Gen X, Millennial", "Boomer", "Boomer, Gen X", "Millennial, Gen Z", "Millennial, Gen Z"])))
+GEN.update(dict(zip([("nov_pop", n) for n in range(1, 6)], [
+    "Boomer, Gen X", "Millennial, Gen Z", "Millennial, Gen Z, Gen Alpha", ALL + ", Gen Alpha", "Millennial, Gen Z"])))
+GEN.update(dict(zip([("music_tg", n) for n in range(1, 6)], ["Gen X", "Boomer", "Gen X, Millennial", "Boomer", "Boomer"])))
+GEN.update(dict(zip([("holiday_travel", n) for n in range(1, 6)], [
+    "Boomer, Gen X", "Gen X, Millennial", "Millennial", "Boomer, Gen X", ""])))  # one left untagged on purpose
+GEN.update(dict(zip([("movies_tg", n) for n in range(1, 6)], [
+    "Gen X, Millennial", "Gen Z, Gen Alpha", "Gen X, Millennial", "Boomer, Gen X", "Boomer"])))
+
 sheet("Questions", ["question_id", "question", "answer", "question_image", "answer_image", "media",
-                    "clip_start", "clip_end", "seconds", "retired", "notes"],
-      [(QID[(cat, n)], qu, an, qi, ai, me, st, en, se, "", no) for cat, n, qu, an, qi, ai, me, st, en, se, no in Q],
-      [10, 60, 34, 26, 26, 26, 9, 9, 8, 8, 18, 12, 12, 14],
+                    "clip_start", "clip_end", "seconds", "retired", "notes", "generations"],
+      [(QID[(cat, n)], qu, an, qi, ai, me, st, en, se, "", no, GEN.get((cat, n), ""))
+       for cat, n, qu, an, qi, ai, me, st, en, se, no in Q],
+      [10, 60, 34, 26, 26, 26, 9, 9, 8, 8, 18, 22, 12, 12, 14],
       auto=[("(auto) in categories", '=IF($A{r}="","",COUNTIF(CategoryQuestions!$C:$C,$A{r}))'),
             ("(auto) times asked", '=IF($A{r}="","",COUNTIF(Usage!$E:$E,$A{r}))'),
             ("(auto) last asked", '=IF($A{r}="","",IF(COUNTIF(Usage!$E:$E,$A{r})=0,"",MAXIFS(Usage!$A:$A,Usage!$E:$E,$A{r})))')])
@@ -232,7 +251,7 @@ wb._sheets = [wb[n] for n in ["Settings", "Venues", "Categories", "Questions", "
 ws = wb["Categories"]
 dv = DataValidation(type="list", formula1='"standard,music,movie"')
 ws.add_data_validation(dv); dv.add("D2:D2000")
-for tab, col in (("Categories", "F"), ("Questions", "J")):
+for tab, col in (("Categories", "F"), ("Questions", "J")):  # retired
     dv = DataValidation(type="list", formula1='"Y"', allow_blank=True)
     wb[tab].add_data_validation(dv); dv.add(f"{col}2:{col}5000")
 dv = DataValidation(type="list", formula1="=Sets!$A$2:$A$1000", allow_blank=True)

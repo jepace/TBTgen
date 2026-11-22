@@ -85,6 +85,35 @@ def usage_index(bank):
     return by_q, by_c
 
 
+def set_mix(bank, set_id):
+    """How many of a set's questions each generation is likely to know (from the Questions 'generations' tags)."""
+    counts = {g: 0 for g in build.GENS}
+    total = tagged = 0
+    for sl in bank["sets"].get(set_id, []):
+        for l in bank["links"].get(sl["category_id"], []):
+            q = bank["qs"].get(l["question_id"])
+            if not q:
+                continue
+            total += 1
+            gs = build.parse_gens(q.get("generations"))
+            if gs:
+                tagged += 1
+            for g in gs:
+                counts[g] += 1
+    return {"counts": counts, "tagged": tagged, "total": total}
+
+
+def audience_fit(bank, venue, set_id):
+    """Generations in the venue's audience that the set serves poorly (under a quarter of tagged questions)."""
+    aud = build.parse_gens((venue or {}).get("audience"))
+    if not aud or not set_id or set_id not in bank["sets"]:
+        return {"audience": aud, "low": []}
+    m = set_mix(bank, set_id)
+    if m["tagged"] < max(1, m["total"] // 2):
+        return {"audience": aud, "low": [], "untagged": True}
+    return {"audience": aud, "low": [g for g in aud if m["counts"][g] < 0.25 * m["tagged"]]}
+
+
 def venue_name(bank, vid):
     v = bank["venues"].get(vid)
     return v["name"] if v else vid
@@ -117,7 +146,8 @@ def api_week(spec):
             status = "bad_set"
         nights.append({"date": str(d), "day": DAYS[d.weekday()], "venue_id": r["venue_id"],
                        "venue": venue["name"] if venue else (r.get("calendar_event") or r["venue_id"] or "?"),
-                       "host": str(r.get("host") or ""), "set_id": str(r.get("set_id") or ""), "status": status})
+                       "host": str(r.get("host") or ""), "set_id": str(r.get("set_id") or ""), "status": status,
+                       "fit": audience_fit(bank, venue, r.get("set_id"))})
     nights.sort(key=lambda n: (n["date"], n["venue"]))
     return {"start": str(start), "end": str(end), "nights": nights, "sets": sorted(bank["sets"], reverse=True)}
 
@@ -130,6 +160,14 @@ def video_info(set_id):
         info["poster"] = f"video/{set_id} at-home.png"
         return info
     return None
+
+
+def cat_gens(bank, cid):
+    c = {g: 0 for g in build.GENS}
+    for l in bank["links"].get(cid, []):
+        for g in build.parse_gens(bank["qs"].get(l["question_id"], {}).get("generations")):
+            c[g] += 1
+    return c
 
 
 def api_sets():
@@ -152,16 +190,17 @@ def api_sets():
                 rounds[rnd].append({
                     "category_id": cid, "title": cat.get("title", "?"), "type": cat.get("type", ""),
                     "bonus": build.is_yes(sl["bonus"]), "questions": len(bank["links"].get(cid, [])),
+                    "gens": cat_gens(bank, cid),
                     "last_played": hist[0][0] if hist else "",
                     "played_at": sorted({venue_name(bank, v) for _, v in hist})[:6]})
         tbs = sorted(bank["tiebreakers"].get(set_id, []), key=lambda t: int(t.get("order") or 0))
-        out.append({"set_id": set_id, "rounds": rounds, "errors": errs, "warnings": warns,
+        out.append({"set_id": set_id, "rounds": rounds, "errors": errs, "warnings": warns, "mix": set_mix(bank, set_id),
                     "tiebreakers": [{"question": str(t["question"]), "answer": str(t["answer"])} for t in tbs],
                     "nights": sorted(nights.get(set_id, []), key=lambda n: n["date"]), "video": video_info(set_id)})
     return {"sets": out}
 
 
-def api_questions(q, cat, limit=300):
+def api_questions(q, cat, limit=300, gen=""):
     bank = get_bank()
     by_q, _ = usage_index(bank)
     cats_of = defaultdict(list)
@@ -173,6 +212,9 @@ def api_questions(q, cat, limit=300):
     for qid, qq in bank["qs"].items():
         if cat and cat not in cats_of.get(qid, []):
             continue
+        qgens = build.parse_gens(qq.get("generations"))
+        if gen == "untagged" and qgens or gen and gen != "untagged" and gen not in qgens:
+            continue
         hay = f"{qid} {qq['question']} {qq['answer']} {qq.get('notes', '')}".lower()
         if any(w not in hay for w in words):
             continue
@@ -182,6 +224,7 @@ def api_questions(q, cat, limit=300):
                     "media": str(qq.get("media") or ""), "retired": build.is_yes(qq.get("retired")),
                     "notes": str(qq.get("notes") or ""), "clip_start": str(qq.get("clip_start") or ""),
                     "clip_end": str(qq.get("clip_end") or ""), "seconds": str(qq.get("seconds") or ""),
+                    "generations": qgens,
                     "categories": [{"id": c, "title": bank["cats"].get(c, {}).get("title", c)} for c in cats_of.get(qid, [])],
                     "times": len(hist), "last": hist[0][0] if hist else "",
                     "history": [{"date": d, "venue": venue_name(bank, v)} for d, v in hist[:12]]})
@@ -200,7 +243,8 @@ def api_categories():
         qs = [{"position": int(l["position"] or 0), "id": l["question_id"],
                "question": str(bank["qs"].get(l["question_id"], {}).get("question", "(missing)")),
                "answer": str(bank["qs"].get(l["question_id"], {}).get("answer", "")),
-               "retired": build.is_yes(bank["qs"].get(l["question_id"], {}).get("retired"))}
+               "retired": build.is_yes(bank["qs"].get(l["question_id"], {}).get("retired")),
+               "generations": build.parse_gens(bank["qs"].get(l["question_id"], {}).get("generations"))}
               for l in bank["links"].get(cid, [])]
         hist = sorted(by_c.get(cid, []), reverse=True)
         in_sets = sorted(sid for sid, slots in bank["sets"].items() if any(sl["category_id"] == cid for sl in slots))
@@ -209,7 +253,7 @@ def api_categories():
                     "retired": build.is_yes(c.get("retired")), "notes": str(c.get("notes", "")),
                     "questions": sorted(qs, key=lambda q: q["position"]), "last_played": hist[0][0] if hist else "",
                     "played_at": sorted({venue_name(bank, v) for _, v in hist})[:8], "times": len({d for d, _ in hist}),
-                    "in_sets": in_sets})
+                    "in_sets": in_sets, "gens": cat_gens(bank, cid)})
     out.sort(key=lambda c: c["title"].lower())
     return {"categories": out, "lookback_days": lookback, "today": str(dt.date.today())}
 
@@ -270,6 +314,7 @@ def api_venues():
                     "night": str(v.get("night", "")), "upcoming_nights": str(v.get("upcoming_nights", "")),
                     "active": str(v.get("active", "")).strip().upper() not in ("N", "NO", "FALSE", "0"),
                     "calendar_name": str(v.get("calendar_name", "")), "next_night": upcoming[0] if upcoming else "",
+                    "audience": build.parse_gens(v.get("audience")),
                     "scheduled": len(upcoming), "last_played": max(played.get(vid, {""})),
                     "games_played": len(played.get(vid, ()))})
     order = {d: i for i, d in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])}
@@ -475,7 +520,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/sets":
                 return self.send_json(api_sets())
             if u.path == "/api/questions":
-                return self.send_json(api_questions(q.get("q", ""), q.get("cat", "")))
+                return self.send_json(api_questions(q.get("q", ""), q.get("cat", ""), gen=q.get("gen", "")))
             if u.path == "/api/files":
                 return self.send_json(api_files())
             if u.path == "/api/categories":
@@ -555,7 +600,18 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/ai/generate":
                     return self.send_json(ai.generate(bank, body.get("topic", ""), body.get("count", 5),
                                                       body.get("difficulty", "mixed"), body.get("notes", ""),
-                                                      body.get("type", "standard")))
+                                                      body.get("type", "standard"), body.get("generations")))
+                if path == "/api/ai/tag":
+                    qids = body.get("question_ids") or []
+                    if body.get("category_id") and not qids:
+                        qids = [l["question_id"] for l in bank["links"].get(body["category_id"], [])]
+                    if body.get("set_id") and not qids:
+                        qids = [l["question_id"] for sl in bank["sets"].get(body["set_id"], [])
+                                for l in bank["links"].get(sl["category_id"], [])]
+                    return self.send_json(ai.tag_generations(bank, list(dict.fromkeys(qids))))
+                if path == "/api/ai/ideas":
+                    return self.send_json(ai.category_ideas(bank, body.get("theme", ""), body.get("count", 10),
+                                                            body.get("generations"), body.get("notes", "")))
             except ai.AIError as e:
                 return self.send_json({"error": str(e)}, 400)
             except Exception as e:
@@ -714,6 +770,12 @@ select.setpick{font-size:13px;padding:3px 6px}
 .spin{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 .gen{display:flex;gap:10px;align-items:flex-start;border-bottom:1px dashed var(--line);padding:9px 0}.gen input{margin-top:4px}
+.gchips{display:inline-flex;gap:4px;flex-wrap:wrap}.gchip{font-size:11px;padding:1px 7px;border-radius:99px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.gpick{display:flex;gap:6px;flex-wrap:wrap}.gpick label{display:flex;gap:4px;align-items:center;font-size:13px;border:1px solid var(--line);border-radius:99px;padding:3px 10px;cursor:pointer}
+.gpick label:has(input:checked){background:var(--ink);color:var(--bg);border-color:var(--ink)}.gpick input{display:none}
+.mix{display:grid;grid-template-columns:max-content 1fr max-content;gap:3px 10px;align-items:center;font-size:12.5px;max-width:420px}
+.mix .b{height:8px;background:var(--chip);border-radius:99px;overflow:hidden}.mix .b i{display:block;height:100%;background:var(--accent)}
+.mix .lo{color:var(--warn)}
 @media (max-width:760px){.f{grid-template-columns:1fr}.f>label{padding-top:0}.sgrid{grid-template-columns:1fr}}
 @media (max-width:760px){.grid3{grid-template-columns:1fr}.hide-sm{display:none}input[type=search]{min-width:0}}
 </style></head><body><main>
@@ -755,7 +817,7 @@ select.setpick{font-size:13px;padding:3px 6px}
 <section data-pane="categories" class="hidden">
 <div class="card"><div class="row"><input type="search" id="cSearch" placeholder="Search categories…">
   <label class="row small" style="gap:5px"><input type="checkbox" id="cRetired"> show retired</label>
-  <span class="muted small" id="cCount"></span><span class="spacer"></span><button class="primary" id="newCat">New category</button></div></div>
+  <span class="muted small" id="cCount"></span><span class="spacer"></span><button id="ideasBtn">Category ideas with AI…</button><button class="primary" id="newCat">New category</button></div></div>
 <div class="card" style="padding:6px 16px"><table><thead><tr><th>Category</th><th class="hide-sm">Type</th><th>Questions</th>
   <th class="hide-sm">Last played</th><th class="hide-sm">In sets</th></tr></thead><tbody id="cRows"></tbody></table></div>
 </section>
@@ -763,7 +825,9 @@ select.setpick{font-size:13px;padding:3px 6px}
 <!-- ============================== QUESTIONS -->
 <section data-pane="questions" class="hidden">
 <div class="card"><div class="row"><input type="search" id="qSearch" placeholder="Search questions, answers, IDs…">
-  <select id="qCat"><option value="">All categories</option></select><span class="muted small" id="qCount"></span>
+  <select id="qCat"><option value="">All categories</option></select>
+  <select id="qGen"><option value="">All ages</option><option>Boomer</option><option>Gen X</option><option>Millennial</option><option>Gen Z</option><option>Gen Alpha</option><option value="untagged">Not tagged yet</option></select>
+  <span class="muted small" id="qCount"></span>
   <span class="spacer"></span><button class="primary" id="newQ">New question</button></div>
   <p class="muted small" style="margin:10px 0 0">Click a question for details and Edit. Changes are saved straight to the spreadsheet.</p></div>
 <div class="card" style="padding:6px 16px"><table><thead><tr><th class="hide-sm"></th><th>ID</th><th>Question</th><th>Answer</th>
@@ -891,7 +955,8 @@ function renderNights(){const shown=S.nights.filter(n=>S.dayOn.has(n.day));
         <option value="">— no set yet —</option>${(S.setIds||[]).map(id=>`<option${id===n.set_id?" selected":""}>${esc(id)}</option>`).join("")}
         ${n.status==="bad_set"?`<option selected>${esc(n.set_id)} (not on Sets tab)</option>`:""}</select>`;
     return `<tr class="${ok?"":"dim"}"><td class="c"><input type="checkbox" data-k="${n.date}:${esc(n.venue_id)}" ${ok&&n.sel!==false?"checked":""} ${ok?"":"disabled"}></td>
-      <td>${n.day}</td><td class="hide-sm">${fmtDate(n.date)}</td><td>${esc(n.venue)}</td><td>${esc(n.host)}</td><td>${tag}</td></tr>`}).join("")
+      <td>${n.day}</td><td class="hide-sm">${fmtDate(n.date)}</td><td>${esc(n.venue)}${n.fit&&n.fit.audience.length?`<div>${gchips(n.fit.audience)}</div>`:""}</td><td>${esc(n.host)}</td>
+      <td>${tag}${n.fit&&n.fit.low&&n.fit.low.length?`<div class="small" style="color:var(--warn);margin-top:3px" title="Under a quarter of this set's tagged questions suit them">⚠ light on ${esc(n.fit.low.join(", "))}</div>`:""}</td></tr>`}).join("")
     :`<tr><td colspan="6" class="empty">No nights on the schedule for these days.</td></tr>`;
   $$("#rows input").forEach(c=>c.onchange=()=>{const n=S.nights.find(x=>`${x.date}:${x.venue_id}`===c.dataset.k);if(n)n.sel=c.checked;countSel()});
   $$("#rows select.setpick").forEach(sel=>sel.onchange=async()=>{sel.disabled=true;
@@ -923,23 +988,25 @@ async function loadSets(){const r=await get("/api/sets").catch(e=>({error:String
     return `<div class="card"><div class="row" style="margin-bottom:10px"><h2 style="margin:0">${esc(s.set_id)}</h2>
       ${s.errors.length?'<span class="tag bad">problems</span>':s.warnings.length?'<span class="tag warn">warnings</span>':'<span class="tag ok">ready</span>'}
       ${s.video?`<span class="tag">video ${fmtLen(s.video.length_seconds)}</span>`:""}<span class="spacer"></span>
-      <button class="sm" data-editset="${esc(s.set_id)}">Edit set</button><button class="sm" data-aiset="${esc(s.set_id)}">Check with AI</button>
+      <button class="sm" data-editset="${esc(s.set_id)}">Edit set</button><button class="sm" data-aiset="${esc(s.set_id)}">Check with AI</button><button class="sm" data-tagset="${esc(s.set_id)}">Tag ages with AI</button>
       <button class="sm" data-video="${esc(s.set_id)}">${s.video?"Watch / remake video":"Make video"}</button></div>
       <div class="grid3">${rounds}</div><div class="small muted" style="margin-top:10px">Nights: ${nights}</div>
+      <details style="margin-top:8px"><summary class="small">Age mix</summary><div style="margin-top:6px">${mixHtml(s.mix)}</div></details>
       ${probs?`<div style="margin-top:8px">${probs}</div>`:""}</div>`}).join(""):`<div class="card empty">No sets on the Sets tab yet.</div>`;
   $$("[data-video]").forEach(b=>b.onclick=()=>{store.set("vSet",b.dataset.video);showTab("video")});
   $$("[data-editset]").forEach(b=>b.onclick=()=>editSet(S.sets.find(x=>x.set_id===b.dataset.editset)));
-  $$("[data-aiset]").forEach(b=>b.onclick=()=>aiCheckSet(S.sets.find(x=>x.set_id===b.dataset.aiset)))}
+  $$("[data-aiset]").forEach(b=>b.onclick=()=>aiCheckSet(S.sets.find(x=>x.set_id===b.dataset.aiset)));
+  $$("[data-tagset]").forEach(b=>b.onclick=()=>aiTag({set_id:b.dataset.tagset},`Tag ages: set ${b.dataset.tagset}`,1,()=>loadSets()))}
 
 /* ---------- questions ---------- */
-async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$("#qCat").value;
-  const r=await get(`/api/questions?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(cat)}`).catch(e=>({error:String(e)}));
+async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$("#qCat").value,gen=$("#qGen").value;
+  const r=await get(`/api/questions?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(cat)}&gen=${encodeURIComponent(gen)}`).catch(e=>({error:String(e)}));
   if(r.error){$("#qRows").innerHTML=`<tr><td colspan="6" class="empty">${esc(r.error)}</td></tr>`;return}
   if($("#qCat").options.length<=1)$("#qCat").innerHTML='<option value="">All categories</option>'+r.categories.map(c=>`<option value="${esc(c.id)}">${esc(c.title)}${c.retired?" (retired)":""}</option>`).join("");
   $("#qCount").textContent=r.matches===r.total?`${r.total} questions`:`${r.matches} of ${r.total}`+(r.results.length<r.matches?` (first ${r.results.length} shown)`:"");
   $("#qRows").innerHTML=r.results.length?r.results.map((x,i)=>{const img=x.question_image||x.answer_image;
     return `<tr class="click${x.retired?" dim":""}" data-i="${i}"><td class="hide-sm">${img?`<img class="thumb" loading="lazy" src="${assetUrl(img)}" alt="">`:x.media?'<span class="tag">'+(/\.(mp3|m4a|wav|aac)$/i.test(x.media)?"♪ audio":"▶ video")+'</span>':""}</td>
-      <td class="mono">${esc(x.id)}</td><td>${esc(x.question)}${x.retired?' <span class="tag">retired</span>':""}</td><td><strong>${esc(x.answer)}</strong></td>
+      <td class="mono">${esc(x.id)}</td><td>${esc(x.question)}${x.retired?' <span class="tag">retired</span>':""}<div>${gchips(x.generations)}</div></td><td><strong>${esc(x.answer)}</strong></td>
       <td class="hide-sm small">${x.categories.map(c=>esc(c.title)).join("<br>")||'<span class="muted">none</span>'}</td>
       <td class="hide-sm small" style="white-space:nowrap">${x.times?`${x.times}× · ${fmtDate(x.last)}`:'<span class="muted">never</span>'}</td></tr>`}).join("")
     :`<tr><td colspan="6" class="empty">No questions match.</td></tr>`;
@@ -957,7 +1024,7 @@ async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$
     d.querySelector("[data-editq]").onclick=()=>editQuestion(x,()=>loadQuestions());
     d.querySelector("[data-aiq]").onclick=()=>aiCheck({question_ids:[x.id]},`Check: ${x.id}`,1,()=>loadQuestions());
     tr.after(d)})}
-$("#qSearch").oninput=()=>{clearTimeout(S.qTimer);S.qTimer=setTimeout(loadQuestions,250)};$("#qCat").onchange=loadQuestions;
+$("#qSearch").oninput=()=>{clearTimeout(S.qTimer);S.qTimer=setTimeout(loadQuestions,250)};$("#qCat").onchange=loadQuestions;$("#qGen").onchange=loadQuestions;
 
 /* ---------- video ---------- */
 async function loadVideoTab(){const r=await get("/api/sets").catch(e=>({error:String(e)}));if(r.error){$("#vList").textContent=r.error;return}
@@ -1025,6 +1092,16 @@ async function loadStatus(){const s=await get("/api/status");const ok=b=>b?'<spa
     const msg=r.error?`<span class="bad-i">✗ ${esc(r.error)}</span>`:`<span class="ok-i">✓ read ${esc(r.source)} at ${esc(r.loaded_at)}</span>`;
     if(!r.error){refreshSource();await loadStatus()}$("#testRes").innerHTML=msg}}
 
+/* ---------- generations ---------- */
+const GENS=["Boomer","Gen X","Millennial","Gen Z","Gen Alpha"],GEN_YEARS={"Boomer":"1946–64","Gen X":"1965–80","Millennial":"1981–96","Gen Z":"1997–2012","Gen Alpha":"2013+"};
+const gchips=gs=>gs&&gs.length?`<span class="gchips">${gs.map(g=>`<span class="gchip">${esc(g)}</span>`).join("")}</span>`:"";
+const gpick=(name,sel)=>`<div class="gpick" data-gpick="${name}">${GENS.map(g=>`<label title="born ${GEN_YEARS[g]}"><input type="checkbox" value="${g}" ${(sel||[]).includes(g)?"checked":""}>${g}</label>`).join("")}</div>`;
+const gread=(root,name)=>[...root.querySelectorAll(`[data-gpick="${name}"] input:checked`)].map(i=>i.value);
+function mixHtml(mix,audience){if(!mix||!mix.total)return"";const t=Math.max(mix.tagged,1);
+  return `<div class="mix">${GENS.map(g=>{const n=mix.counts[g],pct=Math.round(100*n/t),lo=(audience||[]).includes(g)&&n<0.25*mix.tagged;
+    return `<span class="${lo?"lo":""}">${g}</span><span class="b"><i style="width:${pct}%"></i></span><span class="muted">${n}</span>`}).join("")}</div>
+    <div class="small muted" style="margin-top:4px">Questions each generation is likely to know · ${mix.tagged} of ${mix.total} tagged${mix.tagged<mix.total?` (use Tag ages with AI, or tick ages in the question editor)`:""}</div>`}
+
 /* ---------- editing ---------- */
 function toast(msg,err){const t=$("#toast");t.textContent=msg;t.className="show"+(err?" err":"");clearTimeout(S.toastT);S.toastT=setTimeout(()=>t.className="",err?6000:2600)}
 async function edit(body){const r=await post("/api/edit",body).catch(e=>({error:String(e)}));if(r.error){toast("Couldn't save: "+r.error,true);return null}S.loaded={};return r}
@@ -1061,12 +1138,13 @@ async function editQuestion(q,after,which){q=q||{};const isNew=!q.id;
       <input type="text" data-f="clip_end" value="${esc(q.clip_end)}" placeholder="end (s)" style="max-width:110px"><span class="hint">seconds into the clip; blank = whole clip</span></div>
     <label>Seconds on screen</label><div><input type="text" data-f="seconds" value="${esc(q.seconds)}" placeholder="blank = default (60)" style="max-width:180px"></div>
     <label>Notes</label><div><input type="text" data-f="notes" value="${esc(q.notes)}"></div>
+    <label>Who'll know it</label><div>${gpick("qg",q.generations)}<div class="hint">Generations likely to know the answer: used to balance sets for each venue's crowd</div></div>
     <label>Retired</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="retired" ${q.retired?"checked":""}> don't use this question any more</label></div>
     ${isNew?"":`<label>Used in</label><div class="small" style="padding-top:7px">${(q.categories||[]).map(c=>esc(c.title)).join(", ")||"no category yet"}</div>`}</div>`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Add question":"Save","primary",async dd=>{
       const v={question:val(dd,'[data-f=question]'),answer:val(dd,'[data-f=answer]'),question_image:getQ(),answer_image:getA(),media:getM(),
         clip_start:val(dd,'[data-f=clip_start]'),clip_end:val(dd,'[data-f=clip_end]'),seconds:val(dd,'[data-f=seconds]'),
-        notes:val(dd,'[data-f=notes]'),retired:dd.querySelector('[data-f=retired]').checked?"Y":""};
+        notes:val(dd,'[data-f=notes]'),retired:dd.querySelector('[data-f=retired]').checked?"Y":"",generations:gread(dd,"qg").join(", ")};
       if(!v.question||!v.answer){toast("A question needs both the question and the answer",true);return}
       const r=await edit({op:"upsert",tab:"Questions",key:isNew?null:{question_id:q.id},values:v});if(!r)return;
       toast(isNew?`Added ${r.id}`:`Saved ${q.id}`);dd.close();if(after)after(r.id||q.id,v)}]]);
@@ -1081,14 +1159,14 @@ function renderCats(){if(!S.cats)return;const q=$("#cSearch").value.toLowerCase(
   $("#cCount").textContent=`${cs.length} categor${cs.length==1?"y":"ies"}`;
   $("#cRows").innerHTML=cs.length?cs.map(c=>{const n=c.questions.length,ago=daysAgo(c.last_played);
     return `<tr class="click${c.retired?" dim":""}" data-cid="${esc(c.id)}"><td><strong>${esc(c.title)}</strong> <span class="mono muted">${esc(c.id)}</span>${c.retired?' <span class="tag">retired</span>':""}
-      <div class="small muted">${esc(c.blurb).slice(0,110)}${c.blurb.length>110?"…":""}</div></td><td class="hide-sm">${c.type!=="standard"?`<span class="tag">${esc(c.type)}</span>`:'<span class="muted small">standard</span>'}${c.season_tag?`<div class="small muted">${esc(c.season_tag)}</div>`:""}</td>
+      <div class="small muted">${esc(c.blurb).slice(0,110)}${c.blurb.length>110?"…":""}</div><div>${gchips(GENS.filter(g=>c.gens[g]>=3))}</div></td><td class="hide-sm">${c.type!=="standard"?`<span class="tag">${esc(c.type)}</span>`:'<span class="muted small">standard</span>'}${c.season_tag?`<div class="small muted">${esc(c.season_tag)}</div>`:""}</td>
       <td>${n===5?`<span class="tag ok">5</span>`:`<span class="tag ${n?"warn":"bad"}">${n}</span>`}</td>
       <td class="hide-sm small">${c.last_played?`${fmtDate(c.last_played)} <span class="muted">(${ago}d ago)</span><div class="muted">${esc(c.played_at.join(", "))}</div>`:'<span class="muted">never</span>'}</td>
       <td class="hide-sm small" style="white-space:nowrap">${c.in_sets.map(esc).join("<br>")||'<span class="muted">—</span>'}</td></tr>`}).join("")
     :`<tr><td colspan="5" class="empty">No categories match.</td></tr>`;
   $$("#cRows tr.click").forEach(tr=>tr.onclick=()=>editCategory(S.cats.categories.find(c=>c.id===tr.dataset.cid)))}
-$("#cSearch").oninput=renderCats;$("#cRetired").onchange=renderCats;$("#newCat").onclick=()=>editCategory(null);
-async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!c.id;let slots=c.questions.map(q=>({id:q.id,question:q.question,answer:q.answer}));
+$("#cSearch").oninput=renderCats;$("#cRetired").onchange=renderCats;$("#newCat").onclick=()=>editCategory(null);$("#ideasBtn").onclick=aiIdeas;
+async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!c.id;let slots=c.questions.map(q=>({id:q.id,question:q.question,answer:q.answer,generations:q.generations||[]}));
   const d=dialog(1,isNew?"New category":`Edit ${c.title} (${c.id})`,`<div class="f">
     <label>Title</label><div><input type="text" data-f="title" value="${esc(c.title)}" placeholder="e.g. Turkey"></div>
     <label>Intro blurb</label><div><textarea data-f="blurb" placeholder="Shown on the category intro slide">${esc(c.blurb)}</textarea></div>
@@ -1099,7 +1177,8 @@ async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!
     <label>Questions</label><div><div id="slots"></div>
       <div class="pickrow" style="margin-top:8px"><input type="text" id="qFind" placeholder="Find a question to add (text, answer or ID)…"><button class="sm" id="qNewHere">New question…</button></div>
       <div class="res hidden" id="qFound"></div><div class="hint">A category needs exactly 5 questions. A question can be in more than one category.</div>
-      <div class="row" style="margin-top:10px"><button class="sm" id="aiGenHere">Generate with AI…</button><button class="sm" id="aiCheckHere">Check these with AI</button></div></div></div>`,
+      <div class="row" style="margin-top:10px"><button class="sm" id="aiGenHere">Generate with AI…</button><button class="sm" id="aiCheckHere">Check these with AI</button>
+        <button class="sm" id="aiTagHere">Tag ages with AI</button></div></div></div>`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Create category":"Save","primary",async dd=>{
       const v={title:val(dd,'[data-f=title]'),blurb:val(dd,'[data-f=blurb]'),type:val(dd,'[data-f=type]'),season_tag:val(dd,'[data-f=season_tag]'),
         notes:val(dd,'[data-f=notes]'),retired:dd.querySelector('[data-f=retired]').checked?"Y":""};
@@ -1109,7 +1188,7 @@ async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!
       const cid=isNew?r.id:c.id;
       const r2=await edit({op:"replace",tab:"CategoryQuestions",match:{category_id:cid},rows:slots.map((q,i)=>({position:i+1,question_id:q.id}))});if(!r2)return;
       toast(isNew?`Created ${cid}`:`Saved ${v.title}`);dd.close();loadCats()}]]);
-  const draw=()=>{d.querySelector("#slots").innerHTML=slots.length?slots.map((q,i)=>`<div class="slot"><span class="n">${i+1}</span><div class="t">${esc(q.question)}<div class="small"><strong>${esc(q.answer)}</strong> <span class="mono muted">${esc(q.id)}</span></div></div>
+  const draw=()=>{d.querySelector("#slots").innerHTML=slots.length?slots.map((q,i)=>`<div class="slot"><span class="n">${i+1}</span><div class="t">${esc(q.question)}<div class="small"><strong>${esc(q.answer)}</strong> <span class="mono muted">${esc(q.id)}</span> ${gchips(q.generations)}</div></div>
       <button data-up="${i}" ${i?"":"disabled"}>↑</button><button data-dn="${i}" ${i<slots.length-1?"":"disabled"}>↓</button><button data-rm="${i}">✕</button></div>`).join("")
       :'<div class="muted small" style="padding:6px 0">No questions yet.</div>';
     d.querySelectorAll("[data-up]").forEach(b=>b.onclick=()=>{const i=+b.dataset.up;[slots[i-1],slots[i]]=[slots[i],slots[i-1]];draw()});
@@ -1123,9 +1202,11 @@ async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!
     box.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{const x=rs.find(y=>y.id===b.dataset.add);slots.push({id:x.id,question:x.question,answer:x.answer});draw();find()})};
   d.querySelector("#qFind").oninput=()=>{clearTimeout(ft);ft=setTimeout(find,250)};
   d.querySelector("#qNewHere").onclick=()=>editQuestion(null,(id,v)=>{if(slots.length<5){slots.push({id,question:v.question,answer:v.answer});draw()}},2);
+  d.querySelector("#aiTagHere").onclick=()=>{if(!slots.length){toast("Add some questions first",true);return}
+    aiTag({question_ids:slots.map(q=>q.id)},`Tag ages: ${val(d,'[data-f=title]')||"category"}`,2,tags=>{slots.forEach(q=>{if(tags[q.id])q.generations=tags[q.id]});draw()})};
   d.querySelector("#aiCheckHere").onclick=()=>{if(!slots.length){toast("Add some questions first",true);return}
     aiCheck({question_ids:slots.map(q=>q.id),context:val(d,'[data-f=title]')},`Check: ${val(d,'[data-f=title]')||"category"}`,2,()=>{})};
-  d.querySelector("#aiGenHere").onclick=()=>aiGenerate({title:val(d,'[data-f=title]'),type:val(d,'[data-f=type]'),room:5-slots.length,
+  d.querySelector("#aiGenHere").onclick=()=>aiGenerate({title:val(d,'[data-f=title]'),type:val(d,'[data-f=type]'),room:5-slots.length,gens:c.generations||[],
     blurbEmpty:!val(d,'[data-f=blurb]'),onAdd:(added,blurb)=>{added.forEach(q=>{if(slots.length<5)slots.push(q)});draw();
       if(blurb)d.querySelector('[data-f=blurb]').value=blurb;if(!val(d,'[data-f=title]')&&added.topic)d.querySelector('[data-f=title]').value=added.topic}});draw()}
 
@@ -1144,7 +1225,7 @@ async function editSet(set){const isNew=!set;const cr=await get("/api/categories
       <input type="text" id="setId" value="${esc(isNew?nextSetId():set.set_id)}" ${isNew?"":"readonly"}><div class="hint">${isNew?"Usually year-week-letter, e.g. 2026-W49-A":"Set IDs can't be changed (nights and history refer to them)"}</div></div></div>
     <div class="sgrid">${[0,1,2].map(r=>`<div class="rnd"><h4>Round ${r+1}</h4>${[0,1,2].map(sl=>{const i=r*3+sl;return `<div class="small muted">Questions ${sl*5+1}–${sl*5+5}</div>
       <select data-slot="${i}">${opts(cur[i].id)}</select><label class="b"><input type="radio" name="bonus" value="${i}" ${cur[i].bonus?"checked":""}> bonus (double points)</label>`}).join("")}</div>`).join("")}</div>
-    <div class="warnlist" id="setWarn" style="margin-top:10px"></div>
+    <div class="warnlist" id="setWarn" style="margin-top:10px"></div><div id="setMix" style="margin-top:10px"></div>
     <h4 style="margin:14px 0 6px">Tiebreakers <span class="muted small" style="font-weight:400">(year questions: closest total wins)</span></h4>
     ${tbs.map((t,i)=>`<div class="pickrow" style="margin-bottom:6px"><input type="text" data-tbq="${i}" value="${esc(t.question)}" placeholder="Tiebreaker ${i+1} question"><input type="text" data-tba="${i}" value="${esc(t.answer)}" placeholder="answer" style="max-width:110px;flex:0 0 110px"></div>`).join("")}`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Create set":"Save set","primary",async dd=>{
@@ -1165,6 +1246,9 @@ async function editSet(set){const isNew=!set;const cr=await get("/api/categories
       if(c.questions.some(q=>q.retired))w.push(["bad",`${c.title} contains a retired question`])});
     const qs={};picks.forEach(cid=>{const c=cats.find(x=>x.id===cid);if(c)c.questions.forEach(q=>{if(qs[q.id]&&qs[q.id]!==c.title)w.push(["bad",`Question ${q.id} is in both ${qs[q.id]} and ${c.title}`]);qs[q.id]=c.title})});
     if(!d.querySelector("input[name=bonus]:checked"))w.push(["warn","No bonus category picked"]);
+    const mix={counts:Object.fromEntries(GENS.map(g=>[g,0])),tagged:0,total:0};
+    picks.forEach(cid=>{const c=cats.find(x=>x.id===cid);if(c)c.questions.forEach(q=>{mix.total++;if(q.generations&&q.generations.length){mix.tagged++;q.generations.forEach(g=>mix.counts[g]++)}})});
+    d.querySelector("#setMix").innerHTML=mix.total?`<h4 style="margin:0 0 6px">Age mix</h4>${mixHtml(mix)}`:"";
     d.querySelector("#setWarn").innerHTML=w.length?w.map(([k,t])=>`<div style="color:var(--${k})">${k==="bad"?"✗":"!"} ${esc(t)}</div>`).join(""):'<div style="color:var(--ok)">✓ Looks good</div>'};
   d.querySelectorAll("[data-slot],input[name=bonus]").forEach(x=>x.onchange=warn);warn()}
 
@@ -1180,7 +1264,7 @@ function renderVenues(){const q=$("#vnSearch").value.toLowerCase(),all=$("#vnIna
     <td style="width:70px">${v.logo_ok?`<img class="thumb" style="width:56px;height:56px;object-fit:contain;background:#000" src="${assetUrl(v.logo)}" alt="">`:'<span class="tag warn">no logo</span>'}</td>
     <td><strong>${esc(v.name)}</strong> <span class="mono muted">${esc(v.venue_id)}</span>${v.active?"":' <span class="tag">inactive</span>'}
       <div class="small muted">${v.games_played?`${v.games_played} game${v.games_played>1?"s":""} logged · last ${fmtDate(v.last_played)}`:"no games logged yet"}</div></td>
-    <td>${esc(v.night)||'<span class="muted">—</span>'}</td><td class="hide-sm">${esc(v.calendar_name)||'<span class="tag bad">missing</span>'}</td>
+    <td>${esc(v.night)||'<span class="muted">—</span>'}<div>${gchips(v.audience)}</div></td><td class="hide-sm">${esc(v.calendar_name)||'<span class="tag bad">missing</span>'}</td>
     <td class="hide-sm">${esc(v.region)||'<span class="muted">—</span>'}</td>
     <td class="hide-sm small">${v.next_night?`${fmtDate(v.next_night)}${v.scheduled>1?` <span class="muted">(+${v.scheduled-1} more)</span>`:""}`:'<span class="muted">none scheduled</span>'}</td></tr>`).join("")
     :`<tr><td colspan="6" class="empty">No venues match.</td></tr>`;
@@ -1201,10 +1285,12 @@ async function editVenue(v){const isNew=!v;v=v||{active:true,night:""};let idTou
       <div class="hint">Venues in the same region get a warning if they share questions on back-to-back nights</div></div>
     <label>Upcoming nights</label><div><textarea data-f="upcoming_nights" placeholder="One per line, e.g.&#10;December 2nd&#10;December 9th">${esc(v.upcoming_nights)}</textarea>
       <div class="hint">Shown on the deck's “Upcoming Trivia Nights” slide</div></div>
+    <label>Audience</label><div>${gpick("va",v.audience)}<div class="hint">Who usually plays here. Nights whose set misses this crowd get flagged on the Nights tab.</div></div>
     <label>Active</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="active" ${v.active?"checked":""}> currently hosting trivia</label></div></div>`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Add venue":"Save","primary",async dd=>{
       const vals={name:val(dd,'[data-f=name]'),calendar_name:val(dd,'[data-f=calendar_name]'),logo:getLogo(),night:val(dd,'[data-f=night]'),
-        region:val(dd,'[data-f=region]'),upcoming_nights:dd.querySelector('[data-f=upcoming_nights]').value.replace(/\s+$/,""),active:dd.querySelector('[data-f=active]').checked?"Y":"N"};
+        region:val(dd,'[data-f=region]'),upcoming_nights:dd.querySelector('[data-f=upcoming_nights]').value.replace(/\s+$/,""),active:dd.querySelector('[data-f=active]').checked?"Y":"N",
+        audience:gread(dd,"va").join(", ")};
       const id=val(dd,'[data-f=venue_id]');
       if(!vals.name||!id){toast("A venue needs a name and an ID",true);return}
       if(isNew&&!/^[a-z0-9_]+$/.test(id)){toast("Use only lower-case letters, numbers and _ in the venue ID",true);return}
@@ -1295,17 +1381,18 @@ async function aiGenerate(opts){if(!await aiReady())return;const st=S.aiStatus;
     <label>Topic</label><div><input type="text" id="gTopic" value="${esc(opts.title||"")}" placeholder="e.g. Famous Thanksgiving TV episodes"></div>
     <label>How many</label><div><input type="text" id="gCount" value="${Math.max(1,Math.min(10,opts.room>0?opts.room:5))}" style="max-width:80px"><div class="hint">You'll pick which ones to keep</div></div>
     <label>Difficulty</label><div><select id="gDiff"><option value="mixed">a mix</option><option>easy</option><option>medium</option><option>hard</option></select></div>
+    <label>Aim at</label><div>${gpick("gg",opts.gens)}<div class="hint">Optional: pick generations to write for. None = a general crowd.</div></div>
     <label>Notes</label><div><input type="text" id="gNotes" placeholder="optional: angle, things to include or avoid"></div></div><div id="gOut"></div>`,
     [["spacer"],["Close","",dd=>dd.close()],["Generate","primary",async dd=>{
       const topic=dd.querySelector("#gTopic").value.trim();if(!topic){toast("Give a topic",true);return}
       const out=dd.querySelector("#gOut");out.innerHTML=busy("Writing questions… this can take a minute.");
       const r=await post("/api/ai/generate",{topic,count:+dd.querySelector("#gCount").value||5,difficulty:dd.querySelector("#gDiff").value,
-        notes:dd.querySelector("#gNotes").value,type:opts.type||"standard"}).catch(e=>({error:String(e)}));
+        notes:dd.querySelector("#gNotes").value,type:opts.type||"standard",generations:gread(dd,"gg")}).catch(e=>({error:String(e)}));
       if(r.error){out.innerHTML=`<div class="note bad">${esc(r.error)}</div>`;return}
       out.innerHTML=`<h4 style="margin:14px 0 4px">Pick the ones to keep</h4><div class="small muted">${aiMeta(r)}</div>
         ${r.questions.map((q,i)=>`<label class="gen"><input type="checkbox" data-g="${i}" ${i<Math.max(opts.room,0)?"checked":""}>
           <div><div>${esc(q.question)}</div><div class="small"><strong>${esc(q.answer)}</strong>${q.accept_also.length?` <span class="muted">(also: ${esc(q.accept_also.join(", "))})</span>`:""}
-          ${q.difficulty?` <span class="tag">${esc(q.difficulty)}</span>`:""}</div>
+          ${q.difficulty?` <span class="tag">${esc(q.difficulty)}</span>`:""} ${gchips(q.generations)}</div>
           ${q.fun_fact?`<div class="small muted">Fun fact: ${esc(q.fun_fact)}</div>`:""}${q.picture_idea?`<div class="small muted">Picture idea: ${esc(q.picture_idea)}</div>`:""}
           ${q.sources.length?`<div class="small muted">Sources: ${q.sources.map(u=>`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\/(www\.)?/,"").split("/")[0])}</a>`).join(" · ")}</div>`:""}</div></label>`).join("")}
         ${r.blurb?`<label class="gen"><input type="checkbox" id="gBlurb" ${opts.blurbEmpty?"checked":""}><div><div class="small muted">Category intro:</div><div>${esc(r.blurb)}</div></div></label>`:""}
@@ -1315,10 +1402,40 @@ async function aiGenerate(opts){if(!await aiReady())return;const st=S.aiStatus;
         if(pick.length>Math.max(opts.room,0)&&!confirm(`Only ${Math.max(opts.room,0)} fit in this category. Add all ${pick.length} to the bank anyway (the extras won't be in the category)?`))return;
         out.querySelector("#gAdd").disabled=true;const added=[];
         for(const q of pick){const notes=[`AI-generated (${r.model})`,q.accept_also.length?"Accept also: "+q.accept_also.join(", "):"",q.fun_fact?"Fun fact: "+q.fun_fact:"",q.picture_idea?"Picture idea: "+q.picture_idea:""].filter(Boolean).join(" | ").slice(0,500);
-          const res=await edit({op:"upsert",tab:"Questions",key:null,values:{question:q.question,answer:q.answer,notes}});if(!res)break;
-          added.push({id:res.id,question:q.question,answer:q.answer})}
+          const res=await edit({op:"upsert",tab:"Questions",key:null,values:{question:q.question,answer:q.answer,notes,generations:(q.generations||[]).join(", ")}});if(!res)break;
+          added.push({id:res.id,question:q.question,answer:q.answer,generations:q.generations||[]})}
         added.topic=topic;toast(`Added ${added.length} question${added.length==1?"":"s"} to the bank`);
         opts.onAdd(added,(out.querySelector("#gBlurb")||{}).checked?r.blurb:"");dd.close()}}]])}
+
+async function aiTag(body,title,which,after){if(!await aiReady())return;
+  const d=dialog(which,title,busy("Asking which generations know each question… (quick and cheap: no web search)"),[["spacer"],["Close","",dd=>dd.close()]]);
+  const r=await post("/api/ai/tag",body).catch(e=>({error:String(e)}));if(!d.open)return;const b=d.querySelector(".db");
+  if(r.error){b.innerHTML=`<div class="note bad">${esc(r.error)}</div>`;return}
+  b.innerHTML=`<div class="small muted" style="margin-bottom:10px">${esc(r.provider)} · ${esc(r.model)}${r.cost_usd!=null?` · about $${r.cost_usd.toFixed(3)}`:""} · adjust the ticks, then Save tags</div>
+    ${r.results.map((x,i)=>`<div class="airesult"><div class="q">${esc(x.question)}</div><div class="small">Answer: <strong>${esc(x.answer)}</strong> <span class="mono muted">${esc(x.id)}</span></div>
+      <div style="margin-top:6px">${gpick("t"+i,x.missing?x.current:x.suggested)}</div>
+      <div class="small muted" style="margin-top:4px">${x.missing?"The AI skipped this one.":esc(x.why)}${x.current.length?` · currently: ${esc(x.current.join(", "))}`:" · not tagged yet"}</div></div>`).join("")}`;
+  const foot=d.querySelector(".df");const save=document.createElement("button");save.className="primary";save.textContent="Save tags";foot.appendChild(save);
+  save.onclick=async()=>{save.disabled=true;const tags={};let n=0;
+    for(const [i,x] of r.results.entries()){const g=gread(b,"t"+i);tags[x.id]=g;if(g.join(",")===x.current.join(","))continue;
+      if(!await edit({op:"upsert",tab:"Questions",key:{question_id:x.id},values:{generations:g.join(", ")}})){save.disabled=false;return}n++}
+    toast(n?`Saved tags for ${n} question${n==1?"":"s"}`:"No changes to save");d.close();if(after)after(tags)}}
+async function aiIdeas(){if(!await aiReady())return;
+  const d=dialog(1,"Category ideas with AI",`<p class="muted small" style="margin-top:0">Ideas only: titles, blurbs and angles to spark thinking. No questions are written, and nothing is saved unless you click Create.</p>
+    <div class="f"><label>Theme</label><div><input type="text" id="iTheme" placeholder="optional: e.g. December, 90s nostalgia, food, a younger crowd"></div>
+    <label>How many</label><div><input type="text" id="iCount" value="10" style="max-width:80px"></div>
+    <label>Aim at</label><div>${gpick("ig",[])}<div class="hint">Optional: generations the ideas should land with</div></div>
+    <label>Notes</label><div><input type="text" id="iNotes" placeholder="optional: anything to include or avoid"></div></div><div id="iOut"></div>`,
+    [["spacer"],["Close","",dd=>dd.close()],["Get ideas","primary",async dd=>{const out=dd.querySelector("#iOut");out.innerHTML=busy("Brainstorming…");
+      const r=await post("/api/ai/ideas",{theme:dd.querySelector("#iTheme").value,count:+dd.querySelector("#iCount").value||10,generations:gread(dd,"ig"),
+        notes:dd.querySelector("#iNotes").value}).catch(e=>({error:String(e)}));
+      if(r.error){out.innerHTML=`<div class="note bad">${esc(r.error)}</div>`;return}
+      out.innerHTML=`<div class="small muted" style="margin:12px 0 6px">${esc(r.provider)} · ${esc(r.model)}${r.cost_usd!=null?` · about $${r.cost_usd.toFixed(3)}`:""}</div>
+        ${r.ideas.map((x,i)=>`<div class="airesult"><div class="row"><strong>${esc(x.title)}</strong>${x.type!=="standard"?` <span class="tag">${esc(x.type)}</span>`:""}
+          ${x.season?` <span class="tag">${esc(x.season)}</span>`:""}<span class="spacer"></span><button class="sm primary" data-create="${i}">Create category…</button></div>
+          <div style="margin-top:4px">${esc(x.blurb)}</div><div class="small muted" style="margin-top:4px">${esc(x.angle)}</div><div style="margin-top:4px">${gchips(x.generations)}</div></div>`).join("")}`;
+      out.querySelectorAll("[data-create]").forEach(b=>b.onclick=()=>{const x=r.ideas[+b.dataset.create];dd.close();
+        editCategory({questions:[],type:x.type,title:x.title,blurb:x.blurb,season_tag:x.season,notes:`Idea: ${x.angle}`.slice(0,300),generations:x.generations})})}]])}
 
 /* AI settings */
 async function loadAiCard(){const st=await get("/api/ai/status");S.aiStatus=st;

@@ -25,6 +25,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -63,6 +64,26 @@ ROUND_SUB = {1: "Good luck!", 2: "Hang in there…", 3: "It all comes down to th
 # ======================================================================= data
 YES = ("Y", "YES", "TRUE", "1", "X")
 AUTO = "(auto)"  # prefix of helper columns filled by formulas; the generator ignores them
+
+
+GENS = ["Boomer", "Gen X", "Millennial", "Gen Z", "Gen Alpha"]
+GEN_YEARS = {"Boomer": "1946-64", "Gen X": "1965-80", "Millennial": "1981-96", "Gen Z": "1997-2012", "Gen Alpha": "2013+"}
+_GEN_ALIASES = {"boomer": "Boomer", "boomers": "Boomer", "baby boomer": "Boomer", "baby boomers": "Boomer",
+                "gen x": "Gen X", "genx": "Gen X", "x": "Gen X", "millennial": "Millennial", "millennials": "Millennial",
+                "gen y": "Millennial", "geny": "Millennial", "gen z": "Gen Z", "genz": "Gen Z", "zoomer": "Gen Z",
+                "zoomers": "Gen Z", "z": "Gen Z", "gen alpha": "Gen Alpha", "genalpha": "Gen Alpha", "alpha": "Gen Alpha"}
+
+
+def parse_gens(v):
+    """'Boomer, gen-x; Millennials' -> ['Boomer', 'Gen X', 'Millennial'] (in GENS order, unknown words dropped)."""
+    if isinstance(v, (list, tuple)):
+        v = ",".join(str(x) for x in v)
+    found = {_GEN_ALIASES.get(re.sub(r"[-_]", " ", w).strip().lower().replace("  ", " ")) for w in re.split(r"[,;/|]", str(v or ""))}
+    return [g for g in GENS if g in found]
+
+
+def gens_text(v):
+    return ", ".join(parse_gens(v))
 
 
 def is_yes(v):

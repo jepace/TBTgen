@@ -49,6 +49,10 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   chosen via List models). Settings keys ai_provider/ai_model/ai_effort/ai_web_search (hidden from the generic
   Settings form, edited in the AI card). API keys in tbtgen_config.json. Usage log ai_usage.jsonl (gitignored).
   Tested with stand-in providers (no real keys here) - real API calls not yet exercised.
+- Generations: Questions.generations and Venues.audience (comma lists; build.GENS / parse_gens normalises
+  aliases). App: set_mix (per-set counts), audience_fit (flag audience gens < 25% of tagged questions),
+  question filter, editor ticks. AI: tag_generations (effort low, no web), category_ideas (no questions),
+  generate(..., generations). Live sheet got the two columns (Questions L, Venues I).
 - Video style parity idea (not done): one shared layout spec used by both the pptx builder and video.py. Data cached until
   "Reload data". `build.check_sets()` = per-set checks without a schedule.
 - Future idea (not started): an AI voice host (TTS, possibly a licensed

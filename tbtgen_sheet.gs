@@ -264,24 +264,139 @@ function doGet(e) {
   }
 }
 
-/** POST {token, action:"append_usage", rows:[[date, venue_id, set_id, category_id, question_id], ...]} */
+/**
+ * POST {token, action, ...}. Actions:
+ *  - append_usage: rows [[date, venue_id, set_id, category_id, question_id], ...]
+ *  - upsert:  {tab, key:{col:value,...}|null, values:{col:value,...}}
+ *             Updates the row whose key columns match; with no key on Questions/Categories, adds a new row and
+ *             gives it the next ID. Returns {id, row}.
+ *  - replace: {tab, match:{col:value}, rows:[{col:value,...}, ...]}
+ *             The rows matching `match` become exactly `rows` (rewritten in place, extras cleared, more appended).
+ * Only the tabs/columns in EDITABLE can be written; "(auto)" formula columns are never touched.
+ */
+const EDITABLE = {
+  Questions: ['question_id', 'question', 'answer', 'question_image', 'answer_image', 'media', 'clip_start', 'clip_end',
+              'seconds', 'retired', 'notes'],
+  Categories: ['category_id', 'title', 'blurb', 'type', 'season_tag', 'retired', 'notes'],
+  CategoryQuestions: ['category_id', 'position', 'question_id'],
+  Sets: ['set_id', 'round', 'slot', 'category_id', 'bonus'],
+  Tiebreakers: ['set_id', 'order', 'question', 'answer'],
+  Schedule: ['date', 'venue_id', 'set_id', 'host', 'calendar_event'],
+  Venues: ['venue_id', 'name', 'logo', 'region', 'night', 'upcoming_nights', 'active', 'calendar_name'],
+};
+
 function doPost(e) {
   const lock = LockService.getDocumentLock();
   try {
     const body = JSON.parse(e.postData.contents);
     if (!keyOk_(body.token)) return json_({ ok: false, error: 'wrong or missing key' });
-    if (body.action !== 'append_usage') return json_({ ok: false, error: 'unknown action' });
-    const rows = (body.rows || []).map(r => [new Date(String(r[0]) + 'T12:00:00'), r[1], r[2], r[3], r[4]]);
-    if (!rows.length) return json_({ ok: true, added: 0 });
     lock.waitLock(20000);
-    const sh = SpreadsheetApp.getActive().getSheetByName('Usage');
-    const first = lastDataRow_(sh) + 1;
-    sh.getRange(first, 1, rows.length, 5).setValues(rows);
-    sh.getRange(first, 1, rows.length, 1).setNumberFormat('yyyy-mm-dd');
-    return json_({ ok: true, added: rows.length });
+    if (body.action === 'append_usage') return json_(appendUsage_(body.rows || []));
+    if (body.action === 'upsert') return json_(upsert_(body.tab, body.key, body.values || {}));
+    if (body.action === 'replace') return json_(replaceRows_(body.tab, body.match || {}, body.rows || []));
+    return json_({ ok: false, error: 'unknown action' });
   } catch (err) {
-    return json_({ ok: false, error: String(err) });
+    return json_({ ok: false, error: String(err && err.message || err) });
   } finally {
     try { lock.releaseLock(); } catch (_) {}
   }
+}
+
+function appendUsage_(raw) {
+  const rows = raw.map(r => [new Date(String(r[0]) + 'T12:00:00'), r[1], r[2], r[3], r[4]]);
+  if (!rows.length) return { ok: true, added: 0 };
+  const sh = SpreadsheetApp.getActive().getSheetByName('Usage');
+  const first = lastDataRow_(sh) + 1;
+  sh.getRange(first, 1, rows.length, 5).setValues(rows);
+  sh.getRange(first, 1, rows.length, 1).setNumberFormat('yyyy-mm-dd');
+  return { ok: true, added: rows.length };
+}
+
+function tabInfo_(tab) {
+  if (!EDITABLE[tab]) throw new Error('tab not editable: ' + tab);
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(tab);
+  if (!sh) throw new Error('no tab named ' + tab);
+  const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(h => String(h).trim());
+  return { sh: sh, hdr: hdr, tz: ss.getSpreadsheetTimeZone() };
+}
+
+function cellText_(v, tz) {
+  return v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : String(v).trim();
+}
+
+function toCell_(col, v) {
+  if (v === null || v === undefined) return '';
+  if (col === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) return new Date(v + 'T12:00:00');
+  return v;
+}
+
+function checkCols_(tab, obj) {
+  Object.keys(obj).forEach(c => { if (EDITABLE[tab].indexOf(c) < 0) throw new Error(tab + ': column not editable: ' + c); });
+}
+
+function findRows_(info, match) {
+  const keys = Object.keys(match);
+  const last = lastDataRow_(info.sh);
+  if (last < 2 || !keys.length) return [];
+  const idx = keys.map(k => { const i = info.hdr.indexOf(k); if (i < 0) throw new Error('no column ' + k); return i; });
+  const vals = info.sh.getRange(2, 1, last - 1, info.hdr.length).getValues();
+  const out = [];
+  vals.forEach((r, n) => {
+    if (keys.every((k, j) => cellText_(r[idx[j]], info.tz) === String(match[k]).trim())) out.push(n + 2);
+  });
+  return out;
+}
+
+function writeRow_(info, rowNum, values) {
+  Object.keys(values).forEach(c => {
+    const i = info.hdr.indexOf(c);
+    if (i < 0) throw new Error('no column ' + c);
+    const cell = info.sh.getRange(rowNum, i + 1);
+    cell.setValue(toCell_(c, values[c]));
+    if (c === 'date') cell.setNumberFormat('yyyy-mm-dd');
+  });
+}
+
+function upsert_(tab, key, values) {
+  const info = tabInfo_(tab);
+  checkCols_(tab, values);
+  if (key) checkCols_(tab, key);
+  const rule = ID_RULES[tab];
+  if (key && Object.keys(key).length) {
+    const rows = findRows_(info, key);
+    if (rows.length > 1) throw new Error(tab + ': more than one row matches ' + JSON.stringify(key));
+    if (rows.length === 1) {
+      writeRow_(info, rows[0], values);
+      return { ok: true, row: rows[0], id: rule ? key[EDITABLE[tab][0]] : null };
+    }
+    if (rule) throw new Error(tab + ': ' + JSON.stringify(key) + ' not found');
+  }
+  const rowNum = lastDataRow_(info.sh) + 1;
+  const all = Object.assign({}, key || {}, values);
+  let id = null;
+  if (rule && !all[EDITABLE[tab][0]]) {
+    id = rule.prefix + String(nextNumber_(info.sh, rule)).padStart(rule.width, '0');
+    all[EDITABLE[tab][0]] = id;
+  }
+  writeRow_(info, rowNum, all);
+  return { ok: true, row: rowNum, id: id || all[EDITABLE[tab][0]] || null };
+}
+
+function replaceRows_(tab, match, rows) {
+  const info = tabInfo_(tab);
+  checkCols_(tab, match);
+  rows.forEach(r => checkCols_(tab, r));
+  if (!Object.keys(match).length) throw new Error('replace needs a match');
+  const existing = findRows_(info, match);
+  const editableIdx = EDITABLE[tab].map(c => info.hdr.indexOf(c)).filter(i => i >= 0);
+  rows.forEach((r, n) => {
+    const full = Object.assign({}, match, r);
+    const rowNum = n < existing.length ? existing[n] : lastDataRow_(info.sh) + 1;
+    if (n < existing.length) editableIdx.forEach(i => info.sh.getRange(rowNum, i + 1).setValue(''));
+    writeRow_(info, rowNum, full);
+  });
+  existing.slice(rows.length).forEach(rowNum =>
+    editableIdx.forEach(i => info.sh.getRange(rowNum, i + 1).setValue('')));
+  return { ok: true, written: rows.length, cleared: Math.max(0, existing.length - rows.length) };
 }

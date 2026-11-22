@@ -36,7 +36,13 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - At-home video is BUILT: `video.py` (Pillow draws slides in the deck style, ffmpeg makes one clip per slide
   in parallel, then concat). `build.py --video SET_ID` / app Video tab. Countdown = 61 PNG frames of the logo
   filling, overlaid per question. Tested here (fallback fonts); not yet seen on a Mac with the real fonts.
-- App tabs: Nights, Sets, Questions, Video (player with Range support), Files, Status. Data cached until
+- App tabs: Nights (set drop-down per night saves to Schedule), Sets (New/Edit set), Categories (create/edit,
+  pick+order 5 questions), Questions (New/Edit, upload pictures/clips to assets/), Video, Files, Status.
+  Writes go through `bank_write.py` (SheetWriter -> web app doPost actions upsert/replace; XlsxWriter for the
+  .xlsx); EDITABLE tab/column whitelist is duplicated in bank_write.py and tbtgen_sheet.gs: keep them in sync.
+  New IDs are assigned by the writer (Apps Script nextNumber_ / max+1 in xlsx). Tested via Playwright on the xlsx
+  and the .gs logic against fake Apps Script services; not yet against the real deployed sheet.
+- Video style parity idea (not done): one shared layout spec used by both the pptx builder and video.py. Data cached until
   "Reload data". `build.check_sets()` = per-set checks without a schedule.
 - Future idea (not started): an AI voice host (TTS, possibly a licensed
   clone of Troy's voice; Claude-drafted banter with a sheet column to override; pronunciation column).

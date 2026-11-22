@@ -119,7 +119,7 @@ def api_week(spec):
                        "venue": venue["name"] if venue else (r.get("calendar_event") or r["venue_id"] or "?"),
                        "host": str(r.get("host") or ""), "set_id": str(r.get("set_id") or ""), "status": status})
     nights.sort(key=lambda n: (n["date"], n["venue"]))
-    return {"start": str(start), "end": str(end), "nights": nights}
+    return {"start": str(start), "end": str(end), "nights": nights, "sets": sorted(bank["sets"], reverse=True)}
 
 
 def video_info(set_id):
@@ -154,7 +154,9 @@ def api_sets():
                     "bonus": build.is_yes(sl["bonus"]), "questions": len(bank["links"].get(cid, [])),
                     "last_played": hist[0][0] if hist else "",
                     "played_at": sorted({venue_name(bank, v) for _, v in hist})[:6]})
+        tbs = sorted(bank["tiebreakers"].get(set_id, []), key=lambda t: int(t.get("order") or 0))
         out.append({"set_id": set_id, "rounds": rounds, "errors": errs, "warnings": warns,
+                    "tiebreakers": [{"question": str(t["question"]), "answer": str(t["answer"])} for t in tbs],
                     "nights": sorted(nights.get(set_id, []), key=lambda n: n["date"]), "video": video_info(set_id)})
     return {"sets": out}
 
@@ -178,7 +180,8 @@ def api_questions(q, cat, limit=300):
         res.append({"id": qid, "question": str(qq["question"]), "answer": str(qq["answer"]),
                     "question_image": str(qq.get("question_image") or ""), "answer_image": str(qq.get("answer_image") or ""),
                     "media": str(qq.get("media") or ""), "retired": build.is_yes(qq.get("retired")),
-                    "notes": str(qq.get("notes") or ""),
+                    "notes": str(qq.get("notes") or ""), "clip_start": str(qq.get("clip_start") or ""),
+                    "clip_end": str(qq.get("clip_end") or ""), "seconds": str(qq.get("seconds") or ""),
                     "categories": [{"id": c, "title": bank["cats"].get(c, {}).get("title", c)} for c in cats_of.get(qid, [])],
                     "times": len(hist), "last": hist[0][0] if hist else "",
                     "history": [{"date": d, "venue": venue_name(bank, v)} for d, v in hist[:12]]})
@@ -186,6 +189,56 @@ def api_questions(q, cat, limit=300):
     categories = sorted(({"id": c, "title": v.get("title", c), "retired": build.is_yes(v.get("retired"))}
                          for c, v in bank["cats"].items()), key=lambda c: c["title"].lower())
     return {"total": len(bank["qs"]), "matches": len(res), "results": res[:limit], "categories": categories}
+
+
+def api_categories():
+    bank = get_bank()
+    _, by_c = usage_index(bank)
+    lookback = int(bank["settings"].get("repeat_lookback_days", 365) or 365)
+    out = []
+    for cid, c in bank["cats"].items():
+        qs = [{"position": int(l["position"] or 0), "id": l["question_id"],
+               "question": str(bank["qs"].get(l["question_id"], {}).get("question", "(missing)")),
+               "answer": str(bank["qs"].get(l["question_id"], {}).get("answer", "")),
+               "retired": build.is_yes(bank["qs"].get(l["question_id"], {}).get("retired"))}
+              for l in bank["links"].get(cid, [])]
+        hist = sorted(by_c.get(cid, []), reverse=True)
+        in_sets = sorted(sid for sid, slots in bank["sets"].items() if any(sl["category_id"] == cid for sl in slots))
+        out.append({"id": cid, "title": str(c.get("title", "")), "blurb": str(c.get("blurb", "")),
+                    "type": str(c.get("type", "") or "standard"), "season_tag": str(c.get("season_tag", "")),
+                    "retired": build.is_yes(c.get("retired")), "notes": str(c.get("notes", "")),
+                    "questions": sorted(qs, key=lambda q: q["position"]), "last_played": hist[0][0] if hist else "",
+                    "played_at": sorted({venue_name(bank, v) for _, v in hist})[:8], "times": len({d for d, _ in hist}),
+                    "in_sets": in_sets})
+    out.sort(key=lambda c: c["title"].lower())
+    return {"categories": out, "lookback_days": lookback, "today": str(dt.date.today())}
+
+
+def api_assets(kind):
+    folder = ASSETS / ("media" if kind == "media" else "images")
+    if not folder.exists():
+        return {"files": []}
+    return {"files": sorted(p.relative_to(ASSETS).as_posix() for p in folder.rglob("*")
+                            if p.is_file() and not p.name.startswith("."))}
+
+
+def save_upload(kind, name, data_url):
+    import base64
+    folder = ASSETS / ("media" if kind == "media" else "images")
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem).strip("._") or "file"
+    ext = re.sub(r"[^A-Za-z0-9]", "", Path(name).suffix.lower())[:5]
+    allowed = {"images": {"jpg", "jpeg", "png", "gif", "webp"}, "media": {"mp3", "m4a", "wav", "aac", "mp4", "mov", "m4v"}}
+    if ext not in allowed["media" if kind == "media" else "images"]:
+        raise ValueError(f"file type .{ext} isn't allowed here")
+    raw = base64.b64decode(data_url.split(",", 1)[-1])
+    target = folder / f"{stem}.{ext}"
+    n = 2
+    while target.exists():
+        target = folder / f"{stem}-{n}.{ext}"
+        n += 1
+    target.write_bytes(raw)
+    return target.relative_to(ASSETS).as_posix()
 
 
 def api_files():
@@ -383,6 +436,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(api_questions(q.get("q", ""), q.get("cat", "")))
             if u.path == "/api/files":
                 return self.send_json(api_files())
+            if u.path == "/api/categories":
+                return self.send_json(api_categories())
+            if u.path == "/api/assets":
+                return self.send_json(api_assets(q.get("kind", "images")))
             if u.path == "/api/job":
                 with JOB_LOCK:
                     return self.send_json(dict(JOB))
@@ -410,6 +467,28 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "loaded_at": DATA["loaded_at"], "source": DATA["source"]})
             except Exception as e:
                 return self.send_json({"error": str(e)}, 500)
+        if path == "/api/edit":
+            import bank_write
+            try:
+                w = bank_write.writer(ROOT)
+                if body.get("op") == "replace":
+                    w.replace(body["tab"], body.get("match") or {}, body.get("rows") or [])
+                    new_id = None
+                else:
+                    new_id = w.upsert(body["tab"], body.get("key") or None, body.get("values") or {})
+            except (bank_write.WriteError, KeyError, ValueError) as e:
+                return self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                return self.send_json({"error": f"couldn't save: {e}"}, 500)
+            with DATA_LOCK:
+                DATA["bank"] = None  # re-read on next request
+            return self.send_json({"ok": True, "id": new_id})
+        if path == "/api/upload":
+            try:
+                rel = save_upload(body.get("kind", "images"), body.get("name", "file"), body.get("data", ""))
+            except (ValueError, OSError) as e:
+                return self.send_json({"error": str(e)}, 400)
+            return self.send_json({"ok": True, "path": rel})
         if path == "/api/run":
             mode = body.get("mode", "build")
             if mode == "video":
@@ -532,12 +611,31 @@ video{width:100%;max-height:62vh;background:#000;border-radius:10px}
 .kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;font-size:14px}.kv div:nth-child(odd){color:var(--muted)}
 .ok-i{color:var(--ok)}.bad-i{color:var(--bad)}
 .hidden{display:none!important}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);padding:0;width:min(760px,94vw);max-height:90vh}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog .dh{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:1}
+dialog .db{padding:16px 18px;overflow:auto;max-height:calc(90vh - 130px)}dialog .df{display:flex;gap:10px;padding:12px 18px;border-top:1px solid var(--line);position:sticky;bottom:0;background:var(--card)}
+.f{display:grid;grid-template-columns:150px 1fr;gap:10px 14px;align-items:start}.f>label{padding-top:7px;color:var(--muted);font-size:14px}
+.f input[type=text],.f textarea,.f select{width:100%;font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+.f textarea{min-height:76px;resize:vertical}
+dialog input[type=text]{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}.f .hint{font-size:12px;color:var(--muted);margin-top:3px}
+.pickrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.pickrow input[type=text]{flex:1;min-width:160px}.pickrow img{height:46px;border-radius:6px}
+.slot{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px dashed var(--line)}.slot .n{width:22px;color:var(--muted);font-weight:600;padding-top:2px}
+.slot .t{flex:1}.slot button{padding:2px 8px;font-size:13px}
+.res{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:6px}.res div{padding:6px 10px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.res div:last-child{border-bottom:none}.res .t{flex:1;font-size:14px}
+.sgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.sgrid .rnd select{width:100%;margin-bottom:4px}.sgrid label.b{font-size:12px;color:var(--muted);display:flex;gap:4px;align-items:center;margin-bottom:8px}
+.warnlist div{font-size:13px;margin:2px 0}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:10px;font-size:14px;z-index:99;opacity:0;transition:opacity .25s;pointer-events:none}
+#toast.show{opacity:1}#toast.err{background:var(--bad);color:#fff}
+select.setpick{font-size:13px;padding:3px 6px}
+@media (max-width:760px){.f{grid-template-columns:1fr}.f>label{padding-top:0}.sgrid{grid-template-columns:1fr}}
 @media (max-width:760px){.grid3{grid-template-columns:1fr}.hide-sm{display:none}input[type=search]{min-width:0}}
 </style></head><body><main>
 <header><h1><b>TBT</b>gen</h1><span class="pill" id="source">…</span><span class="pill busy hidden" id="busy" title="Show progress"></span>
 <span class="spacer"></span><button id="reloadData" title="Read the spreadsheet again">Reload data</button>
 <button id="openSheet" class="hidden">Open spreadsheet</button><button id="quit" title="Stop TBTgen">Quit</button></header>
-<nav id="tabs"><a data-tab="nights">Nights</a><a data-tab="sets">Sets</a><a data-tab="questions">Questions</a>
+<nav id="tabs"><a data-tab="nights">Nights</a><a data-tab="sets">Sets</a><a data-tab="categories">Categories</a><a data-tab="questions">Questions</a>
 <a data-tab="video">Video</a><a data-tab="files">Files</a><a data-tab="status">Status</a></nav>
 <div id="notes"></div>
 
@@ -563,13 +661,26 @@ video{width:100%;max-height:62vh;background:#000;border-radius:10px}
 </section>
 
 <!-- ============================== SETS -->
-<section data-pane="sets" class="hidden"><div id="setsList"><div class="empty">Loading…</div></div></section>
+<section data-pane="sets" class="hidden">
+<div class="card"><div class="row"><span class="muted small">Each set is 3 rounds × 3 categories, with one bonus category.</span><span class="spacer"></span>
+  <button class="primary" id="newSet">New set</button></div></div>
+<div id="setsList"><div class="empty">Loading…</div></div></section>
+
+<!-- ============================== CATEGORIES -->
+<section data-pane="categories" class="hidden">
+<div class="card"><div class="row"><input type="search" id="cSearch" placeholder="Search categories…">
+  <label class="row small" style="gap:5px"><input type="checkbox" id="cRetired"> show retired</label>
+  <span class="muted small" id="cCount"></span><span class="spacer"></span><button class="primary" id="newCat">New category</button></div></div>
+<div class="card" style="padding:6px 16px"><table><thead><tr><th>Category</th><th class="hide-sm">Type</th><th>Questions</th>
+  <th class="hide-sm">Last played</th><th class="hide-sm">In sets</th></tr></thead><tbody id="cRows"></tbody></table></div>
+</section>
 
 <!-- ============================== QUESTIONS -->
 <section data-pane="questions" class="hidden">
 <div class="card"><div class="row"><input type="search" id="qSearch" placeholder="Search questions, answers, IDs…">
-  <select id="qCat"><option value="">All categories</option></select><span class="muted small" id="qCount"></span></div>
-  <p class="muted small" style="margin:10px 0 0">Click a question for details. Edit questions in the spreadsheet, then Reload data.</p></div>
+  <select id="qCat"><option value="">All categories</option></select><span class="muted small" id="qCount"></span>
+  <span class="spacer"></span><button class="primary" id="newQ">New question</button></div>
+  <p class="muted small" style="margin:10px 0 0">Click a question for details and Edit. Changes are saved straight to the spreadsheet.</p></div>
 <div class="card" style="padding:6px 16px"><table><thead><tr><th class="hide-sm"></th><th>ID</th><th>Question</th><th>Answer</th>
   <th class="hide-sm">Categories</th><th class="hide-sm">Asked</th></tr></thead><tbody id="qRows"></tbody></table></div>
 </section>
@@ -611,6 +722,13 @@ video{width:100%;max-height:62vh;background:#000;border-radius:10px}
 <!-- ============================== STATUS -->
 <section data-pane="status" class="hidden"><div id="statusBody"><div class="empty">Loading…</div></div></section>
 
+<!-- ============================== DIALOGS -->
+<dialog id="dlg"><div class="dh"><strong id="dlgTitle"></strong><span class="spacer"></span><button class="sm" data-close>✕</button></div>
+  <div class="db" id="dlgBody"></div><div class="df" id="dlgFoot"></div></dialog>
+<dialog id="dlg2"><div class="dh"><strong id="dlg2Title"></strong><span class="spacer"></span><button class="sm" data-close>✕</button></div>
+  <div class="db" id="dlg2Body"></div><div class="df" id="dlg2Foot"></div></dialog>
+<div id="toast"></div>
+
 <!-- ============================== RUN LOG (shared) -->
 <section class="card hidden" id="runcard">
   <div class="row" style="margin-bottom:8px"><strong id="runtitle">Running…</strong><span class="spacer"></span><button class="sm" id="runHide">Hide</button></div>
@@ -636,7 +754,7 @@ const fmtLen=s=>`${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,"0")}
 function showTab(t){if(!$(`[data-pane="${t}"]`))t="nights";store.set("tab",t);
   $$("nav a").forEach(a=>a.classList.toggle("on",a.dataset.tab===t));$$("[data-pane]").forEach(p=>p.classList.toggle("hidden",p.dataset.pane!==t));
   if(location.hash!=="#"+t)history.replaceState(null,"","#"+t);
-  ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,questions:()=>S.loaded.q||loadQuestions(),video:loadVideoTab,files:loadFiles,status:loadStatus}[t]||(()=>{}))()}
+  ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,categories:loadCats,questions:()=>S.loaded.q||loadQuestions(),video:loadVideoTab,files:loadFiles,status:loadStatus}[t]||(()=>{}))()}
 $$("nav a").forEach(a=>a.onclick=()=>showTab(a.dataset.tab));
 
 /* ---------- nights ---------- */
@@ -645,18 +763,23 @@ function chips(){$("#days").innerHTML=DAYS.map(d=>`<button class="chip${S.dayOn.
 function renderNights(){const shown=S.nights.filter(n=>S.dayOn.has(n.day));
   if(S.rangeTxt)$("#range").textContent=S.rangeTxt+(shown.length<S.nights.length?` · ${shown.length} shown`:"");
   $("#rows").innerHTML=shown.length?shown.map(n=>{const ok=n.status==="ok";
-    const tag=ok?`<span class="tag ok">${esc(n.set_id)}</span>`:n.status==="no_set"?`<span class="tag warn">no set yet</span>`:
-      n.status==="bad_set"?`<span class="tag bad">${esc(n.set_id)}: not on Sets tab</span>`:`<span class="tag bad">venue not on Venues tab</span>`;
+    const tag=n.status==="no_venue"?`<span class="tag bad">venue not on Venues tab</span>`:
+      `<select class="setpick" data-date="${n.date}" data-venue="${esc(n.venue_id)}" title="Pick the set for this night (saved to the spreadsheet)">
+        <option value="">— no set yet —</option>${(S.setIds||[]).map(id=>`<option${id===n.set_id?" selected":""}>${esc(id)}</option>`).join("")}
+        ${n.status==="bad_set"?`<option selected>${esc(n.set_id)} (not on Sets tab)</option>`:""}</select>`;
     return `<tr class="${ok?"":"dim"}"><td class="c"><input type="checkbox" data-k="${n.date}:${esc(n.venue_id)}" ${ok&&n.sel!==false?"checked":""} ${ok?"":"disabled"}></td>
       <td>${n.day}</td><td class="hide-sm">${fmtDate(n.date)}</td><td>${esc(n.venue)}</td><td>${esc(n.host)}</td><td>${tag}</td></tr>`}).join("")
     :`<tr><td colspan="6" class="empty">No nights on the schedule for these days.</td></tr>`;
-  $$("#rows input").forEach(c=>c.onchange=()=>{const n=S.nights.find(x=>`${x.date}:${x.venue_id}`===c.dataset.k);if(n)n.sel=c.checked;countSel()});countSel()}
+  $$("#rows input").forEach(c=>c.onchange=()=>{const n=S.nights.find(x=>`${x.date}:${x.venue_id}`===c.dataset.k);if(n)n.sel=c.checked;countSel()});
+  $$("#rows select.setpick").forEach(sel=>sel.onchange=async()=>{sel.disabled=true;
+    const r=await edit({op:"upsert",tab:"Schedule",key:{date:sel.dataset.date,venue_id:sel.dataset.venue},values:{set_id:sel.value}});
+    if(r)toast(sel.value?`Set ${sel.value} saved for ${sel.dataset.venue}`:"Set cleared");S.loaded={};loadWeek()});countSel()}
 const selected=()=>$$("#rows input:checked").map(c=>c.dataset.k);
 function countSel(){const k=selected().length;$("#build").textContent=k?`Build ${k} deck${k>1?"s":""}`:"Build";$("#build").disabled=$("#check").disabled=!k||!!S.polling}
 async function loadWeek(){S.loaded.nights=true;$("#range").textContent="Loading schedule…";$("#rows").innerHTML="";
   const r=await get("/api/week?week="+encodeURIComponent(S.week)).catch(e=>({error:String(e)}));
   if(r.error){$("#range").textContent="Couldn't load the schedule";$("#rows").innerHTML=`<tr><td colspan="6" class="empty">${esc(r.error)}</td></tr>`;return}
-  S.nights=r.nights;S.rangeTxt=`${fmtDate(r.start)} – ${fmtDate(r.end)} · ${S.nights.length} night${S.nights.length==1?"":"s"}`;renderNights();refreshSource()}
+  S.nights=r.nights;S.setIds=r.sets;S.rangeTxt=`${fmtDate(r.start)} – ${fmtDate(r.end)} · ${S.nights.length} night${S.nights.length==1?"":"s"}`;renderNights();refreshSource()}
 $$("#weekSeg button").forEach(b=>b.onclick=()=>{$$("#weekSeg button").forEach(x=>x.classList.remove("on"));b.classList.add("on");$("#pick").value="";S.week=b.dataset.week;loadWeek()});
 $("#pick").onchange=e=>{if(!e.target.value)return;$$("#weekSeg button").forEach(x=>x.classList.remove("on"));S.week=e.target.value;loadWeek()};
 $("#all").onclick=()=>{S.nights.forEach(n=>n.sel=true);renderNights()};$("#none").onclick=()=>{S.nights.forEach(n=>n.sel=false);renderNights()};
@@ -677,10 +800,12 @@ async function loadSets(){const r=await get("/api/sets").catch(e=>({error:String
     return `<div class="card"><div class="row" style="margin-bottom:10px"><h2 style="margin:0">${esc(s.set_id)}</h2>
       ${s.errors.length?'<span class="tag bad">problems</span>':s.warnings.length?'<span class="tag warn">warnings</span>':'<span class="tag ok">ready</span>'}
       ${s.video?`<span class="tag">video ${fmtLen(s.video.length_seconds)}</span>`:""}<span class="spacer"></span>
+      <button class="sm" data-editset="${esc(s.set_id)}">Edit set</button>
       <button class="sm" data-video="${esc(s.set_id)}">${s.video?"Watch / remake video":"Make video"}</button></div>
       <div class="grid3">${rounds}</div><div class="small muted" style="margin-top:10px">Nights: ${nights}</div>
       ${probs?`<div style="margin-top:8px">${probs}</div>`:""}</div>`}).join(""):`<div class="card empty">No sets on the Sets tab yet.</div>`;
-  $$("[data-video]").forEach(b=>b.onclick=()=>{store.set("vSet",b.dataset.video);showTab("video")})}
+  $$("[data-video]").forEach(b=>b.onclick=()=>{store.set("vSet",b.dataset.video);showTab("video")});
+  $$("[data-editset]").forEach(b=>b.onclick=()=>editSet(S.sets.find(x=>x.set_id===b.dataset.editset)))}
 
 /* ---------- questions ---------- */
 async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$("#qCat").value;
@@ -703,7 +828,9 @@ async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$
       <div style="flex:1;min-width:220px"><div style="white-space:pre-wrap">${esc(x.question)}</div><div style="margin-top:6px">Answer: <strong>${esc(x.answer)}</strong></div>
       ${x.notes?`<div class="small muted">Notes: ${esc(x.notes)}</div>`:""}
       <div class="small" style="margin-top:6px">In: ${x.categories.map(c=>`${esc(c.title)} <span class="muted mono">${esc(c.id)}</span>`).join(", ")||"no category"}</div>
-      <div class="small muted" style="margin-top:4px">${x.history.length?"Asked: "+x.history.map(h=>`${fmtDate(h.date)} ${esc(h.venue)}`).join(" · "):"Never asked yet"}</div></div></div></td>`;
+      <div class="small muted" style="margin-top:4px">${x.history.length?"Asked: "+x.history.map(h=>`${fmtDate(h.date)} ${esc(h.venue)}`).join(" · "):"Never asked yet"}</div>
+      <div style="margin-top:10px"><button class="sm primary" data-editq>Edit question</button></div></div></div></td>`;
+    d.querySelector("[data-editq]").onclick=()=>editQuestion(x,()=>loadQuestions());
     tr.after(d)})}
 $("#qSearch").oninput=()=>{clearTimeout(S.qTimer);S.qTimer=setTimeout(loadQuestions,250)};$("#qCat").onchange=loadQuestions;
 
@@ -766,6 +893,145 @@ async function loadStatus(){const s=await get("/api/status");const ok=b=>b?'<spa
   $("#testConn").onclick=async()=>{$("#testRes").textContent="Reading…";const r=await post("/api/reload");
     const msg=r.error?`<span class="bad-i">✗ ${esc(r.error)}</span>`:`<span class="ok-i">✓ read ${esc(r.source)} at ${esc(r.loaded_at)}</span>`;
     if(!r.error){refreshSource();await loadStatus()}$("#testRes").innerHTML=msg}}
+
+/* ---------- editing ---------- */
+function toast(msg,err){const t=$("#toast");t.textContent=msg;t.className="show"+(err?" err":"");clearTimeout(S.toastT);S.toastT=setTimeout(()=>t.className="",err?6000:2600)}
+async function edit(body){const r=await post("/api/edit",body).catch(e=>({error:String(e)}));if(r.error){toast("Couldn't save: "+r.error,true);return null}S.loaded={};return r}
+function dialog(which,title,bodyHtml,buttons){const d=$(which==2?"#dlg2":"#dlg"),p=which==2?"#dlg2":"#dlg";
+  $(p+"Title").textContent=title;$(p+"Body").innerHTML=bodyHtml;$(p+"Foot").innerHTML="";
+  buttons.forEach(([label,cls,fn])=>{const b=document.createElement("button");b.textContent=label;if(cls)b.className=cls;
+    if(label==="spacer"){const sp=document.createElement("span");sp.className="spacer";$(p+"Foot").appendChild(sp);return}
+    b.onclick=async()=>{b.disabled=true;try{if(fn)await fn(d)}finally{b.disabled=false}};$(p+"Foot").appendChild(b)});
+  d.querySelectorAll("[data-close]").forEach(x=>x.onclick=()=>d.close());if(!d.open)d.showModal();return d}
+const val=(root,sel)=>root.querySelector(sel).value.trim();
+async function assetPicker(root,name,kind,current){const box=root.querySelector(`[data-asset="${name}"]`);
+  const list=(await get("/api/assets?kind="+kind)).files||[];const dl=`dl_${name}_${Math.random().toString(36).slice(2,7)}`;
+  box.innerHTML=`<div class="pickrow"><input type="text" list="${dl}" value="${esc(current)}" placeholder="${kind==="media"?"media/clip.mp3":"images/picture.jpg"}">
+    <datalist id="${dl}">${list.map(f=>`<option value="${esc(f)}">`).join("")}</datalist>
+    <label class="btn" style="border:1px solid var(--line);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:14px">Upload…<input type="file" hidden accept="${kind==="media"?"audio/*,video/*":"image/*"}"></label>
+    <button type="button" class="sm" data-clear>Clear</button><span class="pv"></span></div>`;
+  const inp=box.querySelector("input[type=text]"),pv=box.querySelector(".pv");
+  const show=()=>{const v=inp.value.trim();pv.innerHTML=!v?"":kind==="media"?`<span class="tag">${/\.(mp3|m4a|wav|aac)$/i.test(v)?"♪":"▶"} ${esc(v.split("/").pop())}</span>`:`<img src="${assetUrl(v)}" alt="" onerror="this.replaceWith(document.createTextNode('(not found)'))">`};
+  inp.oninput=show;box.querySelector("[data-clear]").onclick=()=>{inp.value="";show()};show();
+  box.querySelector("input[type=file]").onchange=async e=>{const f=e.target.files[0];if(!f)return;pv.textContent="Uploading…";
+    const data=await new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.readAsDataURL(f)});
+    const r=await post("/api/upload",{kind:kind==="media"?"media":"images",name:f.name,data});
+    if(r.error){toast(r.error,true);show();return}inp.value=r.path;show();toast("Uploaded "+r.path)};
+  return ()=>inp.value.trim()}
+async function editQuestion(q,after,which){q=q||{};const isNew=!q.id;
+  let getQ=()=>q.question_image||"",getA=()=>q.answer_image||"",getM=()=>q.media||"";  // until the pickers load
+  const d=dialog(which||1,isNew?"New question":`Edit ${q.id}`,`<div class="f">
+    <label>Question</label><div><textarea data-f="question">${esc(q.question)}</textarea></div>
+    <label>Answer</label><div><input type="text" data-f="answer" value="${esc(q.answer)}"></div>
+    <label>Question picture</label><div data-asset="qimg"></div>
+    <label>Answer picture</label><div data-asset="aimg"><div class="hint">optional: shown when the answer is revealed</div></div>
+    <label>Song / movie clip</label><div><div data-asset="media"></div><div class="hint">for Music and Movie categories</div></div>
+    <label>Clip start / end</label><div class="pickrow"><input type="text" data-f="clip_start" value="${esc(q.clip_start)}" placeholder="start (s)" style="max-width:110px">
+      <input type="text" data-f="clip_end" value="${esc(q.clip_end)}" placeholder="end (s)" style="max-width:110px"><span class="hint">seconds into the clip; blank = whole clip</span></div>
+    <label>Seconds on screen</label><div><input type="text" data-f="seconds" value="${esc(q.seconds)}" placeholder="blank = default (60)" style="max-width:180px"></div>
+    <label>Notes</label><div><input type="text" data-f="notes" value="${esc(q.notes)}"></div>
+    <label>Retired</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="retired" ${q.retired?"checked":""}> don't use this question any more</label></div>
+    ${isNew?"":`<label>Used in</label><div class="small" style="padding-top:7px">${(q.categories||[]).map(c=>esc(c.title)).join(", ")||"no category yet"}</div>`}</div>`,
+    [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Add question":"Save","primary",async dd=>{
+      const v={question:val(dd,'[data-f=question]'),answer:val(dd,'[data-f=answer]'),question_image:getQ(),answer_image:getA(),media:getM(),
+        clip_start:val(dd,'[data-f=clip_start]'),clip_end:val(dd,'[data-f=clip_end]'),seconds:val(dd,'[data-f=seconds]'),
+        notes:val(dd,'[data-f=notes]'),retired:dd.querySelector('[data-f=retired]').checked?"Y":""};
+      if(!v.question||!v.answer){toast("A question needs both the question and the answer",true);return}
+      const r=await edit({op:"upsert",tab:"Questions",key:isNew?null:{question_id:q.id},values:v});if(!r)return;
+      toast(isNew?`Added ${r.id}`:`Saved ${q.id}`);dd.close();if(after)after(r.id||q.id,v)}]]);
+  [getQ,getA,getM]=await Promise.all([assetPicker(d,"qimg","images",q.question_image||""),assetPicker(d,"aimg","images",q.answer_image||""),assetPicker(d,"media","media",q.media||"")])}
+
+/* categories */
+async function loadCats(){const r=await get("/api/categories").catch(e=>({error:String(e)}));
+  if(r.error){$("#cRows").innerHTML=`<tr><td colspan="5" class="empty">${esc(r.error)}</td></tr>`;return}S.cats=r;renderCats()}
+function daysAgo(d){return d?Math.round((Date.parse(S.cats?.today||new Date().toISOString().slice(0,10))-Date.parse(d))/864e5):null}
+function renderCats(){if(!S.cats)return;const q=$("#cSearch").value.toLowerCase(),showR=$("#cRetired").checked;
+  const cs=S.cats.categories.filter(c=>(showR||!c.retired)&&(`${c.id} ${c.title} ${c.blurb} ${c.season_tag}`.toLowerCase().includes(q)));
+  $("#cCount").textContent=`${cs.length} categor${cs.length==1?"y":"ies"}`;
+  $("#cRows").innerHTML=cs.length?cs.map(c=>{const n=c.questions.length,ago=daysAgo(c.last_played);
+    return `<tr class="click${c.retired?" dim":""}" data-cid="${esc(c.id)}"><td><strong>${esc(c.title)}</strong> <span class="mono muted">${esc(c.id)}</span>${c.retired?' <span class="tag">retired</span>':""}
+      <div class="small muted">${esc(c.blurb).slice(0,110)}${c.blurb.length>110?"…":""}</div></td><td class="hide-sm">${c.type!=="standard"?`<span class="tag">${esc(c.type)}</span>`:'<span class="muted small">standard</span>'}${c.season_tag?`<div class="small muted">${esc(c.season_tag)}</div>`:""}</td>
+      <td>${n===5?`<span class="tag ok">5</span>`:`<span class="tag ${n?"warn":"bad"}">${n}</span>`}</td>
+      <td class="hide-sm small">${c.last_played?`${fmtDate(c.last_played)} <span class="muted">(${ago}d ago)</span><div class="muted">${esc(c.played_at.join(", "))}</div>`:'<span class="muted">never</span>'}</td>
+      <td class="hide-sm small" style="white-space:nowrap">${c.in_sets.map(esc).join("<br>")||'<span class="muted">—</span>'}</td></tr>`}).join("")
+    :`<tr><td colspan="5" class="empty">No categories match.</td></tr>`;
+  $$("#cRows tr.click").forEach(tr=>tr.onclick=()=>editCategory(S.cats.categories.find(c=>c.id===tr.dataset.cid)))}
+$("#cSearch").oninput=renderCats;$("#cRetired").onchange=renderCats;$("#newCat").onclick=()=>editCategory(null);
+async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!c.id;let slots=c.questions.map(q=>({id:q.id,question:q.question,answer:q.answer}));
+  const d=dialog(1,isNew?"New category":`Edit ${c.title} (${c.id})`,`<div class="f">
+    <label>Title</label><div><input type="text" data-f="title" value="${esc(c.title)}" placeholder="e.g. Turkey"></div>
+    <label>Intro blurb</label><div><textarea data-f="blurb" placeholder="Shown on the category intro slide">${esc(c.blurb)}</textarea></div>
+    <label>Type</label><div><select data-f="type">${["standard","music","movie"].map(t=>`<option${t===c.type?" selected":""}>${t}</option>`).join("")}</select></div>
+    <label>Season</label><div><input type="text" data-f="season_tag" value="${esc(c.season_tag)}" placeholder="e.g. November (optional)"></div>
+    <label>Notes</label><div><input type="text" data-f="notes" value="${esc(c.notes)}"></div>
+    <label>Retired</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="retired" ${c.retired?"checked":""}> don't use this category any more</label></div>
+    <label>Questions</label><div><div id="slots"></div>
+      <div class="pickrow" style="margin-top:8px"><input type="text" id="qFind" placeholder="Find a question to add (text, answer or ID)…"><button class="sm" id="qNewHere">New question…</button></div>
+      <div class="res hidden" id="qFound"></div><div class="hint">A category needs exactly 5 questions. A question can be in more than one category.</div></div></div>`,
+    [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Create category":"Save","primary",async dd=>{
+      const v={title:val(dd,'[data-f=title]'),blurb:val(dd,'[data-f=blurb]'),type:val(dd,'[data-f=type]'),season_tag:val(dd,'[data-f=season_tag]'),
+        notes:val(dd,'[data-f=notes]'),retired:dd.querySelector('[data-f=retired]').checked?"Y":""};
+      if(!v.title){toast("Give the category a title",true);return}
+      if(slots.length!==5&&!confirm(`This category has ${slots.length} question(s); a game needs 5. Save anyway?`))return;
+      const r=await edit({op:"upsert",tab:"Categories",key:isNew?null:{category_id:c.id},values:v});if(!r)return;
+      const cid=isNew?r.id:c.id;
+      const r2=await edit({op:"replace",tab:"CategoryQuestions",match:{category_id:cid},rows:slots.map((q,i)=>({position:i+1,question_id:q.id}))});if(!r2)return;
+      toast(isNew?`Created ${cid}`:`Saved ${v.title}`);dd.close();loadCats()}]]);
+  const draw=()=>{d.querySelector("#slots").innerHTML=slots.length?slots.map((q,i)=>`<div class="slot"><span class="n">${i+1}</span><div class="t">${esc(q.question)}<div class="small"><strong>${esc(q.answer)}</strong> <span class="mono muted">${esc(q.id)}</span></div></div>
+      <button data-up="${i}" ${i?"":"disabled"}>↑</button><button data-dn="${i}" ${i<slots.length-1?"":"disabled"}>↓</button><button data-rm="${i}">✕</button></div>`).join("")
+      :'<div class="muted small" style="padding:6px 0">No questions yet.</div>';
+    d.querySelectorAll("[data-up]").forEach(b=>b.onclick=()=>{const i=+b.dataset.up;[slots[i-1],slots[i]]=[slots[i],slots[i-1]];draw()});
+    d.querySelectorAll("[data-dn]").forEach(b=>b.onclick=()=>{const i=+b.dataset.dn;[slots[i+1],slots[i]]=[slots[i],slots[i+1]];draw()});
+    d.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{slots.splice(+b.dataset.rm,1);draw();find()})};
+  let ft=null;const find=async()=>{const q=d.querySelector("#qFind").value.trim(),box=d.querySelector("#qFound");if(!q){box.classList.add("hidden");return}
+    const r=await get("/api/questions?q="+encodeURIComponent(q));const rs=(r.results||[]).filter(x=>!x.retired).slice(0,12);box.classList.remove("hidden");
+    box.innerHTML=rs.length?rs.map(x=>`<div><span class="t">${esc(x.question)}<br><span class="small"><strong>${esc(x.answer)}</strong> <span class="mono muted">${esc(x.id)}</span>
+      ${x.categories.length?`<span class="muted"> · in ${esc(x.categories.map(c=>c.title).join(", "))}</span>`:""}</span></span>
+      <button class="sm" data-add="${esc(x.id)}" ${slots.length>=5||slots.some(s=>s.id===x.id)?"disabled":""}>${slots.some(s=>s.id===x.id)?"Added":"Add"}</button></div>`).join(""):'<div class="muted small">No matches</div>';
+    box.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{const x=rs.find(y=>y.id===b.dataset.add);slots.push({id:x.id,question:x.question,answer:x.answer});draw();find()})};
+  d.querySelector("#qFind").oninput=()=>{clearTimeout(ft);ft=setTimeout(find,250)};
+  d.querySelector("#qNewHere").onclick=()=>editQuestion(null,(id,v)=>{if(slots.length<5){slots.push({id,question:v.question,answer:v.answer});draw()}},2);draw()}
+
+/* sets */
+function nextSetId(){const ids=(S.sets||[]).map(s=>s.set_id);const now=new Date(Date.now()+7*864e5);
+  const d=new Date(Date.UTC(now.getFullYear(),now.getMonth(),now.getDate()));const day=d.getUTCDay()||7;d.setUTCDate(d.getUTCDate()+4-day);
+  const y=d.getUTCFullYear(),w=Math.ceil(((d-Date.UTC(y,0,1))/864e5+1)/7);
+  for(const L of "ABCDEFGH"){const id=`${y}-W${String(w).padStart(2,"0")}-${L}`;if(!ids.includes(id))return id}return ""}
+$("#newSet").onclick=()=>editSet(null);
+async function editSet(set){const isNew=!set;const cr=await get("/api/categories");const cats=cr.categories,look=cr.lookback_days;S.cats=cr;
+  const cur=Array.from({length:9},(_,i)=>{const c=set&&set.rounds[Math.floor(i/3)][i%3];return c?{id:c.category_id,bonus:c.bonus}:{id:"",bonus:false}});
+  const tbs=Array.from({length:3},(_,i)=>(set&&set.tiebreakers[i])||{question:"",answer:""});
+  const opts=sel=>`<option value="">— pick a category —</option>`+cats.filter(c=>!c.retired||c.id===sel).map(c=>{const ago=daysAgo(c.last_played);
+    return `<option value="${esc(c.id)}"${c.id===sel?" selected":""}>${esc(c.title)}${c.questions.length!==5?` (${c.questions.length}q)`:""}${c.type!=="standard"?` · ${c.type}`:""}${ago!==null?` · ${ago}d ago`:""}</option>`}).join("");
+  const d=dialog(1,isNew?"New set":`Edit set ${set.set_id}`,`<div class="f" style="margin-bottom:12px"><label>Set ID</label><div>
+      <input type="text" id="setId" value="${esc(isNew?nextSetId():set.set_id)}" ${isNew?"":"readonly"}><div class="hint">${isNew?"Usually year-week-letter, e.g. 2026-W49-A":"Set IDs can't be changed (nights and history refer to them)"}</div></div></div>
+    <div class="sgrid">${[0,1,2].map(r=>`<div class="rnd"><h4>Round ${r+1}</h4>${[0,1,2].map(sl=>{const i=r*3+sl;return `<div class="small muted">Questions ${sl*5+1}–${sl*5+5}</div>
+      <select data-slot="${i}">${opts(cur[i].id)}</select><label class="b"><input type="radio" name="bonus" value="${i}" ${cur[i].bonus?"checked":""}> bonus (double points)</label>`}).join("")}</div>`).join("")}</div>
+    <div class="warnlist" id="setWarn" style="margin-top:10px"></div>
+    <h4 style="margin:14px 0 6px">Tiebreakers <span class="muted small" style="font-weight:400">(year questions: closest total wins)</span></h4>
+    ${tbs.map((t,i)=>`<div class="pickrow" style="margin-bottom:6px"><input type="text" data-tbq="${i}" value="${esc(t.question)}" placeholder="Tiebreaker ${i+1} question"><input type="text" data-tba="${i}" value="${esc(t.answer)}" placeholder="answer" style="max-width:110px;flex:0 0 110px"></div>`).join("")}`,
+    [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Create set":"Save set","primary",async dd=>{
+      const id=dd.querySelector("#setId").value.trim();if(!id){toast("Give the set an ID",true);return}
+      if(isNew&&(S.sets||[]).some(s=>s.set_id===id)){toast(`There's already a set called ${id}`,true);return}
+      const picks=[...dd.querySelectorAll("[data-slot]")].map(s=>s.value),b=dd.querySelector("input[name=bonus]:checked");
+      if(picks.some(p=>!p)&&!confirm("Some slots are empty. Save anyway?"))return;
+      const rows=picks.map((cid,i)=>({round:Math.floor(i/3)+1,slot:i%3+1,category_id:cid,bonus:b&&+b.value===i?"Y":""})).filter(r=>r.category_id);
+      if(!await edit({op:"replace",tab:"Sets",match:{set_id:id},rows}))return;
+      const tb=[0,1,2].map(i=>({order:i+1,question:dd.querySelector(`[data-tbq="${i}"]`).value.trim(),answer:dd.querySelector(`[data-tba="${i}"]`).value.trim()})).filter(t=>t.question);
+      if(!await edit({op:"replace",tab:"Tiebreakers",match:{set_id:id},rows:tb}))return;
+      toast(isNew?`Created set ${id}`:`Saved set ${id}`);dd.close();loadSets()}]]);
+  const warn=()=>{const picks=[...d.querySelectorAll("[data-slot]")].map(s=>s.value),w=[];const seen={};
+    picks.forEach((cid,i)=>{if(!cid)return;const c=cats.find(x=>x.id===cid);const where=`Round ${Math.floor(i/3)+1}`;
+      if(seen[cid])w.push(["bad",`${c.title} is picked twice`]);seen[cid]=1;
+      if(c.questions.length!==5)w.push(["bad",`${c.title} has ${c.questions.length} questions (needs 5)`]);
+      const ago=daysAgo(c.last_played);if(ago!==null&&ago<=look)w.push(["warn",`${c.title} (${where}) was played ${ago} days ago at ${c.played_at.join(", ")}`]);
+      if(c.questions.some(q=>q.retired))w.push(["bad",`${c.title} contains a retired question`])});
+    const qs={};picks.forEach(cid=>{const c=cats.find(x=>x.id===cid);if(c)c.questions.forEach(q=>{if(qs[q.id]&&qs[q.id]!==c.title)w.push(["bad",`Question ${q.id} is in both ${qs[q.id]} and ${c.title}`]);qs[q.id]=c.title})});
+    if(!d.querySelector("input[name=bonus]:checked"))w.push(["warn","No bonus category picked"]);
+    d.querySelector("#setWarn").innerHTML=w.length?w.map(([k,t])=>`<div style="color:var(--${k})">${k==="bad"?"✗":"!"} ${esc(t)}</div>`).join(""):'<div style="color:var(--ok)">✓ Looks good</div>'};
+  d.querySelectorAll("[data-slot],input[name=bonus]").forEach(x=>x.onchange=warn);warn()}
+
+$("#newQ").onclick=()=>editQuestion(null,()=>loadQuestions());
 
 /* ---------- runs (shared) ---------- */
 function cls(l){return/^(ERROR|Stopped|Google Sheet:|Traceback|Video failed|Nothing to build)/.test(l)?"ln-err":/^WARNING/.test(l)?"ln-warn":/^built/.test(l)?"ln-ok":/^(SKIPPED|NOTE)/.test(l)?"ln-skip":""}

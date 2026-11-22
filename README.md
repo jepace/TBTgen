@@ -62,8 +62,16 @@ Double-click **TBTgen.command** (or run `python3 tbtgen_app.py`); your browser o
 - **Nights**: a week of the schedule. Filter weekdays, tick nights, **Check** or **Build** decks;
   "Log as played" also writes the Usage tab. Nights with no set or an unknown venue can't be ticked.
 - **Sets**: each set's 9 categories by round, bonus, problems, when/where each category was last played,
-  which nights use it, and its video.
-- **Questions**: search the bank (text, answer, ID) or filter by category; click for pictures, clips and history.
+  which nights use it, and its video. **New set / Edit set**: a 3×3 grid of category pickers, bonus, tiebreakers,
+  with live warnings (played recently, not 5 questions, a question in two categories).
+- **Categories**: browse, **create and edit** categories and pick/reorder their 5 questions (search, or New question).
+- **Questions**: search the bank (text, answer, ID) or filter by category; click for pictures, clips and history;
+  **New question / Edit question**, including uploading pictures and clips into the assets folder.
+- On **Nights**, each night has a set drop-down: picking one saves it to the Schedule tab.
+
+Everything you edit in the app is saved straight to the spreadsheet (the Google Sheet through its web app, or
+trivia_bank.xlsx). After updating `tbtgen_sheet.gs`, redeploy it (Deploy → Manage deployments → edit → Version:
+New version) or the app's saves will be refused. Uploaded pictures/clips go into this computer's `assets/` folder.
 - **Video**: make the at-home video for a set (seconds per question/answer, 720p/1080p, with or without
   music/movie categories), watch it in the page, download it or open it in your player.
 - **Files**: every deck, answer key and video, with View / Open / Download.

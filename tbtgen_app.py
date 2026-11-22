@@ -336,6 +336,56 @@ def api_settings():
                           "meaning": str(r.get("meaning", "") or "")} for r in bank["Settings"] if r.get("key")]}
 
 
+IMPORTS = ROOT / "imports"
+
+
+def api_import_runs():
+    runs = []
+    if IMPORTS.exists():
+        for d in sorted(IMPORTS.iterdir(), reverse=True):
+            f = d / "import.json"
+            if not f.exists():
+                continue
+            try:
+                r = json.loads(f.read_text())
+            except ValueError:
+                continue
+            runs.append({"name": d.name, "created": r.get("created", ""), "decks": len(r.get("decks", [])),
+                         "categories": len(r.get("categories", [])), "questions": len(r.get("questions", {})),
+                         "folders": r.get("folders", [])})
+    return {"runs": runs}
+
+
+def api_import_run(name):
+    import import_decks as imp
+    d = IMPORTS / Path(name).name
+    r = json.loads((d / "import.json").read_text())
+    applied = json.loads((d / "applied.json").read_text()) if (d / "applied.json").exists() else {"questions": {}, "categories": {}}
+    try:
+        bank = get_bank()
+        existing = {imp.qkey(q["question"], q["answer"]): qid for qid, q in bank["qs"].items()}
+    except Exception:
+        existing = {}
+    for k, q in r["questions"].items():
+        q["in_bank"] = existing.get(k) or applied["questions"].get(k) or ""
+    for c in r["categories"]:
+        c["added_as"] = applied["categories"].get(c["key"]) or ""
+        c["new_questions"] = sum(1 for k in c["questions"] if not r["questions"][k]["in_bank"])
+    r["name"] = d.name
+    r["has_review"] = (d / "review.xlsx").exists()
+    return r
+
+
+def pick_folder():
+    if sys.platform != "darwin":
+        raise ValueError("folder picking needs a Mac: type or paste the folder path instead")
+    p = subprocess.run(["osascript", "-e", 'POSIX path of (choose folder with prompt "Pick the folder with old decks")'],
+                       capture_output=True, text=True, timeout=600)
+    if p.returncode != 0:
+        raise ValueError("no folder picked")
+    return p.stdout.strip()
+
+
 def api_files():
     files = []
     if OUT.exists():
@@ -383,24 +433,28 @@ JOB = {"id": 0, "kind": "", "title": "", "lines": [], "done": True, "rc": None, 
 JOB_LOCK = threading.Lock()
 
 
-def start_job(kind, title, args):
+def start_job(kind, title, args, script="build.py"):
     with JOB_LOCK:
         if not JOB["done"]:
             return None
-        JOB.update(id=JOB["id"] + 1, kind=kind, title=title, lines=[], done=False, rc=None, files=[], progress=None)
+        JOB.update(id=JOB["id"] + 1, kind=kind, title=title, lines=[], done=False, rc=None, files=[], progress=None,
+                   import_dir=None)
         job_id = JOB["id"]
 
     def run():
         env = dict(os.environ, PYTHONUNBUFFERED="1")
-        p = subprocess.Popen([sys.executable, str(ROOT / "build.py"), *args], cwd=ROOT, stdout=subprocess.PIPE,
+        p = subprocess.Popen([sys.executable, str(ROOT / script), *args], cwd=ROOT, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True, env=env)
         for line in p.stdout:
             line = line.rstrip("\n")
             with JOB_LOCK:
-                m = re.match(r"video: (\d+)/(\d+)$", line)
+                m = re.match(r"(?:video|deck): (\d+)/(\d+)", line)
                 if m:
                     JOB["progress"] = [int(m.group(1)), int(m.group(2))]
                     continue  # don't flood the log
+                if line.startswith("IMPORT_DIR "):
+                    JOB["import_dir"] = Path(line[len("IMPORT_DIR "):]).name
+                    continue
                 JOB["lines"].append(line)
                 if line.startswith("built  "):
                     rel = line[len("built  "):].split("   (")[0]
@@ -541,6 +595,15 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     settings = {}
                 return self.send_json(ai.status(settings))
+            if u.path == "/api/import/runs":
+                return self.send_json(api_import_runs())
+            if u.path == "/api/import/run":
+                return self.send_json(api_import_run(q.get("name", "")))
+            if u.path == "/api/import/asset":
+                p = safe_under(IMPORTS / Path(q.get("run", "")).name / "assets", q.get("name", ""))
+                if not p:
+                    return self.send_json({"error": "not found"}, 404)
+                return self.send_file(p)
             if u.path == "/api/venues":
                 return self.send_json(api_venues())
             if u.path == "/api/settings":
@@ -626,6 +689,41 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_json({"error": f"AI request failed: {e}"}, 500)
             return self.send_json({"error": "not found"}, 404)
+        if path == "/api/pick-folder":
+            try:
+                return self.send_json({"path": pick_folder()})
+            except (ValueError, OSError, subprocess.SubprocessError) as e:
+                return self.send_json({"error": str(e)}, 400)
+        if path == "/api/import/scan":
+            folders = [f for f in body.get("folders", []) if str(f).strip()]
+            if not folders:
+                return self.send_json({"error": "give a folder to scan"}, 400)
+            args = [*folders]
+            if body.get("pictures"):
+                args.append("--pictures")
+            if body.get("clips"):
+                args.append("--clips")
+            job = start_job("import", f"Reading decks in {', '.join(Path(f).name or f for f in folders)}", args,
+                            script="import_decks.py")
+            return self.send_json({"job": job} if job else {"error": "something is already running"}, 200 if job else 409)
+        if path == "/api/import/apply":
+            import bank_write
+            import import_decks as imp
+            try:
+                res = imp.apply_import(IMPORTS / Path(body.get("run", "")).name, body.get("category_keys") or [],
+                                       get_bank(), bank_write.writer(ROOT), history=bool(body.get("history")))
+            except (bank_write.WriteError, ValueError, FileNotFoundError) as e:
+                return self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                return self.send_json({"error": f"import failed: {e}"}, 500)
+            with DATA_LOCK:
+                DATA["bank"] = None
+            return self.send_json({"ok": True, **res})
+        if path == "/api/import/open-review":
+            p = IMPORTS / Path(body.get("run", "")).name / "review.xlsx"
+            if p.exists():
+                open_path(p)
+            return self.send_json({"ok": p.exists()})
         if path == "/api/upload":
             try:
                 rel = save_upload(body.get("kind", "images"), body.get("name", "file"), body.get("data", ""))
@@ -794,7 +892,7 @@ select.setpick{font-size:13px;padding:3px 6px}
 <span class="spacer"></span><button id="reloadData" title="Read the spreadsheet again">Reload data</button>
 <button id="openSheet" class="hidden">Open spreadsheet</button><button id="quit" title="Stop TBTgen">Quit</button></header>
 <nav id="tabs"><a data-tab="nights">Nights</a><a data-tab="sets">Sets</a><a data-tab="categories">Categories</a><a data-tab="questions">Questions</a><a data-tab="venues">Venues</a>
-<a data-tab="video">Video</a><a data-tab="files">Files</a><a data-tab="settings">Settings</a><a data-tab="status">Status</a></nav>
+<a data-tab="video">Video</a><a data-tab="files">Files</a><a data-tab="import">Import</a><a data-tab="settings">Settings</a><a data-tab="status">Status</a></nav>
 <div id="notes"></div>
 
 <!-- ============================== NIGHTS -->
@@ -855,6 +953,25 @@ select.setpick{font-size:13px;padding:3px 6px}
   Venues without a logo use the Trivia By Troy logo.</p></div>
 <div class="card" style="padding:6px 16px"><table><thead><tr><th></th><th>Venue</th><th>Night</th><th class="hide-sm">Calendar name</th>
   <th class="hide-sm">Region</th><th class="hide-sm">Next night</th></tr></thead><tbody id="vnRows"></tbody></table></div>
+</section>
+
+<!-- ============================== IMPORT -->
+<section data-pane="import" class="hidden">
+<div class="card"><h2>Import old decks</h2>
+  <p class="muted small" style="margin-top:0">Reads Keynote (.key) and PowerPoint (.pptx) game decks in a folder and its sub-folders, finds the
+  categories, questions and answers, and merges repeats. Nothing is added to the bank until you pick categories and click Add.</p>
+  <div class="pickrow" style="margin-bottom:10px"><input type="text" id="imFolder" placeholder="/Users/troy/Documents/Trivia decks">
+    <button id="imPick">Choose folder…</button></div>
+  <div class="row" style="margin-bottom:6px"><label class="row small" style="gap:6px"><input type="checkbox" id="imPics" checked> Import pictures</label>
+    <label class="row small" style="gap:6px"><input type="checkbox" id="imClips"> Import song &amp; movie clips</label></div>
+  <div class="hint muted small" style="margin-bottom:12px">Pictures and clips are optional: unticked, they're only counted, so you can see how much space they'd take first.
+    Clips (especially movies) are the big ones.</div>
+  <div class="row"><button class="primary" id="imScan">Scan decks</button><span class="muted small" id="imRunsHint"></span></div></div>
+<div class="card hidden" id="imProgress"><div class="row" style="margin-bottom:8px"><strong id="imPTitle">Reading decks…</strong><span class="spacer"></span>
+  <span class="muted small" id="imPct"></span></div><div class="bar"><i id="imBar"></i></div></div>
+<div class="card hidden" id="imSummary"></div>
+<div class="card hidden" id="imCats"></div>
+<div class="card"><h2>Earlier scans</h2><div id="imRuns" class="muted small">None yet.</div></div>
 </section>
 
 <!-- ============================== SETTINGS -->
@@ -952,7 +1069,7 @@ const fmtLen=s=>`${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,"0")}
 function showTab(t){if(!$(`[data-pane="${t}"]`))t="nights";store.set("tab",t);
   $$("nav a").forEach(a=>a.classList.toggle("on",a.dataset.tab===t));$$("[data-pane]").forEach(p=>p.classList.toggle("hidden",p.dataset.pane!==t));
   if(location.hash!=="#"+t)history.replaceState(null,"","#"+t);
-  ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,categories:loadCats,questions:()=>S.loaded.q||loadQuestions(),venues:loadVenues,video:loadVideoTab,files:loadFiles,settings:loadSettings,status:loadStatus}[t]||(()=>{}))()}
+  ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,categories:loadCats,questions:()=>S.loaded.q||loadQuestions(),venues:loadVenues,video:loadVideoTab,files:loadFiles,import:loadImportTab,settings:loadSettings,status:loadStatus}[t]||(()=>{}))()}
 $$("nav a").forEach(a=>a.onclick=()=>showTab(a.dataset.tab));
 window.addEventListener("hashchange",()=>{const t=location.hash.slice(1);if(t&&t!==store.get("tab",""))showTab(t)});
 
@@ -1459,6 +1576,70 @@ async function aiIdeas(){if(!await aiReady())return;
       out.querySelectorAll("[data-create]").forEach(b=>b.onclick=()=>{const x=r.ideas[+b.dataset.create];dd.close();
         editCategory({questions:[],type:x.type,title:x.title,blurb:x.blurb,season_tag:x.season,notes:`Idea: ${x.angle}`.slice(0,300),generations:x.generations})})}]])}
 
+/* ---------- import ---------- */
+const MB=b=>b>=1e9?(b/1e9).toFixed(1)+" GB":(b/1e6).toFixed(1)+" MB";
+async function loadImportTab(){$("#imFolder").value=$("#imFolder").value||store.get("imFolder","");const r=await get("/api/import/runs");
+  $("#imRuns").innerHTML=r.runs.length?`<table><tbody>${r.runs.map(x=>`<tr class="click" data-run="${esc(x.name)}"><td><strong>${esc(x.created.replace("T"," "))}</strong>
+    <div class="small muted">${esc((x.folders||[]).join(", "))}</div></td><td class="small">${x.decks} decks · ${x.categories} categories · ${x.questions} questions</td>
+    <td style="text-align:right"><button class="sm">Open</button></td></tr>`).join("")}</tbody></table>`:"None yet.";
+  $$("#imRuns [data-run]").forEach(tr=>tr.onclick=()=>showImport(tr.dataset.run));
+  if(!S.imRun&&r.runs.length)showImport(r.runs[0].name)}
+$("#imPick").onclick=async()=>{const r=await post("/api/pick-folder");if(r.error){toast(r.error,true);return}$("#imFolder").value=r.path;store.set("imFolder",r.path)};
+$("#imScan").onclick=async()=>{const f=$("#imFolder").value.trim();if(!f){toast("Choose or type a folder first",true);return}store.set("imFolder",f);
+  const r=await post("/api/import/scan",{folders:[f],pictures:$("#imPics").checked,clips:$("#imClips").checked});if(r.error){toast(r.error,true);return}
+  $("#imProgress").classList.remove("hidden");$("#imBar").style.width="0";$("#imPTitle").textContent="Reading decks…";$("#imPct").textContent="";
+  $("#runcard").classList.remove("hidden");$("#log").innerHTML="";$("#runfiles").innerHTML="";S.polling=setInterval(poll,800);poll();setBusy(true)};
+async function showImport(name){S.imRun=name;const r=await get("/api/import/run?name="+encodeURIComponent(name)).catch(e=>({error:String(e)}));
+  if(r.error){toast(r.error,true);return}S.imData=r;const qs=r.questions;
+  const nq=Object.keys(qs).length,newq=Object.values(qs).filter(q=>!q.in_bank).length;
+  const probs=r.decks.flatMap(d=>d.problems.map(p=>[d.name,p])),unk=r.decks.flatMap(d=>d.unknown.map(u=>[d.name,`slide ${u.slide}: ${u.text}`]));
+  const err=r.decks.filter(d=>d.error).length;
+  const m=r.media;
+  $("#imSummary").classList.remove("hidden");
+  $("#imSummary").innerHTML=`<div class="row" style="margin-bottom:8px"><h2 style="margin:0">Scan of ${esc(r.created.replace("T"," "))}</h2><span class="spacer"></span>
+      ${r.has_review?`<button class="sm" id="imReview">Open review spreadsheet</button>`:""}</div>
+    <div class="kv"><div>Decks</div><div>${r.decks.length}${err?` <span class="tag bad">${err} couldn't be read</span>`:""}</div>
+      <div>Categories</div><div>${r.categories.length}</div><div>Questions</div><div>${nq} · <strong>${newq} new</strong> · ${nq-newq} already in the bank</div>
+      <div>Pictures</div><div>${m.images.count} (${MB(m.images.bytes)}) ${m.images.imported?'<span class="tag ok">imported</span>':'<span class="tag">counted only</span>'}</div>
+      <div>Song &amp; movie clips</div><div>${m.clips.count} (${MB(m.clips.bytes)}) ${m.clips.imported?'<span class="tag ok">imported</span>':'<span class="tag">counted only</span>'}</div></div>
+    ${probs.length||unk.length?`<details style="margin-top:10px"><summary class="small">Check these: ${probs.length} problem${probs.length==1?"":"s"}${unk.length?`, ${unk.length} slide${unk.length==1?"":"s"} that look like questions but weren't recognised`:""}</summary>
+      <div class="small" style="margin-top:6px;max-height:260px;overflow:auto">${[...unk.map(x=>`<div style="color:var(--warn)">? ${esc(x[0])}: ${esc(x[1])}</div>`),...probs.map(x=>`<div class="muted">• ${esc(x[0])}: ${esc(x[1])}</div>`)].join("")}</div></details>`:""}
+    <details style="margin-top:6px"><summary class="small">Decks</summary><table style="margin-top:6px"><tbody>${r.decks.map(d=>`<tr><td class="small">${esc(d.name)}</td>
+      <td class="small">${esc(d.date)} <span class="muted">(${esc(d.date_source)})</span></td><td class="small">${esc(d.venue_guess||"")}</td>
+      <td class="small muted">${d.error?`<span style="color:var(--bad)">${esc(d.error)}</span>`:`${d.counts.question||0} questions · ${d.counts.answer||0} answers`}</td></tr>`).join("")}</tbody></table></details>`;
+  const rv=$("#imReview");if(rv)rv.onclick=()=>post("/api/import/open-review",{run:name});
+  S.imSel=new Set(r.categories.filter(c=>!c.added_as&&c.new_questions>0).map(c=>c.key));renderImportCats()}
+function renderImportCats(){const r=S.imData;if(!r)return;const qs=r.questions,q=($("#imFilter")||{value:""}).value?.toLowerCase()||"",onlyNew=($("#imOnlyNew")||{checked:false}).checked;
+  const cats=r.categories.filter(c=>(!onlyNew||(!c.added_as&&c.new_questions>0))&&`${c.title} ${c.blurb}`.toLowerCase().includes(q));
+  const img=rel=>rel?`<img class="thumb" loading="lazy" style="width:54px;height:40px" src="/api/import/asset?run=${encodeURIComponent(r.name)}&name=${encodeURIComponent(rel)}&t=${T}" alt="">`:"";
+  $("#imCats").classList.remove("hidden");
+  $("#imCats").innerHTML=`<div class="row" style="margin-bottom:8px"><h2 style="margin:0">Categories found</h2><span class="spacer"></span>
+      <input type="search" id="imFilter" placeholder="Filter…" value="${esc(q)}" style="min-width:160px"><label class="row small" style="gap:5px"><input type="checkbox" id="imOnlyNew" ${onlyNew?"checked":""}> only new</label>
+      <button class="sm" id="imAll">Select all new</button><button class="sm" id="imNone">Select none</button></div>
+    <table><tbody>${cats.map(c=>{const st=c.added_as?`<span class="tag ok">added as ${esc(c.added_as)}</span>`:c.new_questions?`<span class="tag warn">${c.new_questions} new question${c.new_questions==1?"":"s"}</span>`:'<span class="tag">all in bank</span>';
+      const dates=c.appearances.map(a=>a.date).sort();
+      return `<tr><td class="c"><input type="checkbox" data-ck="${esc(c.key)}" ${S.imSel.has(c.key)?"checked":""} ${c.added_as?"disabled":""}></td>
+        <td><strong>${esc(c.title)}</strong>${c.type!=="standard"?` <span class="tag">${esc(c.type)}</span>`:""} ${st}
+          <div class="small muted">${esc(c.blurb).slice(0,120)}</div>
+          <details><summary class="small">${c.questions.length} question${c.questions.length==1?"":"s"}</summary>${c.questions.map(k=>{const x=qs[k];
+            return `<div class="row small" style="margin:4px 0;align-items:flex-start">${img(x.question_image)}${img(x.answer_image)}<div style="flex:1">${esc(x.question)}<br><strong>${esc(x.answer||"(no answer found)")}</strong>
+              ${x.media?' <span class="tag">♪/▶ clip</span>':x.media_names&&x.media_names.length&&!r.media.clips.imported?' <span class="tag">clip not imported</span>':""}${x.in_bank?` <span class="tag">${esc(x.in_bank)}</span>`:""}</div></div>`}).join("")}</details></td>
+        <td class="small hide-sm">used ${c.appearances.length}× <div class="muted">${esc(dates[0])}${dates.length>1?` – ${esc(dates[dates.length-1])}`:""}</div></td></tr>`}).join("")||'<tr><td class="empty">Nothing matches.</td></tr>'}</tbody></table>
+    <div class="row" style="margin-top:12px"><button class="primary" id="imAdd"></button>
+      <label class="row small" style="gap:6px" title="For decks whose file or folder name includes a venue name"><input type="checkbox" id="imHistory"> also record play history (venue + date from file names)</label></div>`;
+  const upd=()=>{const n=S.imSel.size;$("#imAdd").textContent=n?`Add ${n} categor${n==1?"y":"ies"} to the bank`:"Add to the bank";$("#imAdd").disabled=!n};
+  $$("#imCats [data-ck]").forEach(cb=>cb.onchange=()=>{cb.checked?S.imSel.add(cb.dataset.ck):S.imSel.delete(cb.dataset.ck);upd()});upd();
+  $("#imFilter").oninput=()=>{clearTimeout(S.imT);S.imT=setTimeout(()=>{renderImportCats();const f=$("#imFilter");f.focus();f.setSelectionRange(f.value.length,f.value.length)},250)};
+  $("#imOnlyNew").onchange=renderImportCats;
+  $("#imAll").onclick=()=>{r.categories.filter(c=>!c.added_as&&c.new_questions>0).forEach(c=>S.imSel.add(c.key));renderImportCats()};
+  $("#imNone").onclick=()=>{S.imSel.clear();renderImportCats()};
+  $("#imAdd").onclick=async()=>{const n=S.imSel.size;if(!n)return;if(!confirm(`Add ${n} categor${n==1?"y":"ies"} and their new questions to the question bank?`))return;
+    $("#imAdd").disabled=true;$("#imAdd").textContent="Adding…";
+    const res=await post("/api/import/apply",{run:r.name,category_keys:[...S.imSel],history:$("#imHistory").checked}).catch(e=>({error:String(e)}));
+    if(res.error){toast("Couldn't add: "+res.error,true);$("#imAdd").disabled=false;return}S.loaded={};
+    toast(`Added ${res.categories_added} categor${res.categories_added==1?"y":"ies"} and ${res.questions_added} new question${res.questions_added==1?"":"s"}${res.history_rows?` · ${res.history_rows} history rows`:""}`);
+    showImport(r.name)}}
+
 /* AI settings */
 async function loadAiCard(){const st=await get("/api/ai/status");S.aiStatus=st;
   $("#aiProvider").value=st.provider;$("#aiModel").value=(S.settings||[]).find(x=>x.key==="ai_model")?.value||"";
@@ -1491,15 +1672,18 @@ async function run(body){const r=await post("/api/run",body);if(r.error){alert(r
 function setBusy(on,txt){$("#busy").classList.toggle("hidden",!on);if(txt)$("#busy").textContent=txt;$("#vBuild").disabled=on;countSel()}
 async function poll(){const j=await get("/api/job");$("#runtitle").textContent=j.title+(j.done?"":"…");
   $("#log").innerHTML=j.lines.map(l=>`<span class="${cls(l)}">${esc(l)}</span>`).join("\n");$("#log").scrollTop=1e9;
-  if(j.progress){const [a,b]=j.progress,p=Math.round(100*a/b);$("#vBar").style.width=p+"%";$("#vPct").textContent=`${a} of ${b} slides`;setBusy(true,`Video ${p}%`)}
+  if(j.progress&&j.kind==="import"){const [a,b]=j.progress,p=Math.round(100*a/b);$("#imBar").style.width=p+"%";$("#imPct").textContent=`${a} of ${b} decks`;setBusy(true,`Import ${p}%`)}
+  else if(j.progress){const [a,b]=j.progress,p=Math.round(100*a/b);$("#vBar").style.width=p+"%";$("#vPct").textContent=`${a} of ${b} slides`;setBusy(true,`Video ${p}%`)}
   else if(!j.done)setBusy(true,j.kind==="check"?"Checking…":"Building…");
   $("#runfiles").innerHTML=j.files.map(f=>`<span class="tag ok">${esc(f.split("/").pop())}</span> <button class="sm" data-o="${esc(f)}">Open</button>`).join(" ");
   $$("#runfiles [data-o]").forEach(b=>b.onclick=()=>post("/api/open",{file:b.dataset.o}));
   if(j.done){clearInterval(S.polling);S.polling=null;setBusy(false);
     const warns=j.lines.filter(l=>cls(l)==="ln-warn").length,decks=j.files.filter(f=>f.endsWith(".pptx")).length;
     $("#runtitle").textContent=j.rc!==0?`${j.title}: stopped, see the messages below`:
-      j.kind==="video"?`${j.title}: done`:decks?`Done: ${decks} deck${decks>1?"s":""} built${warns?`, ${warns} warning${warns>1?"s":""}`:""}`:
+      j.kind==="video"||j.kind==="import"?`${j.title}: done`:decks?`Done: ${decks} deck${decks>1?"s":""} built${warns?`, ${warns} warning${warns>1?"s":""}`:""}`:
       warns?`Check finished: ${warns} warning${warns>1?"s":""}`:"Check finished: no problems found";
+    if(j.kind==="import"){$("#imPTitle").textContent=j.rc===0?"Scan finished":"Scan failed: see the messages below";
+      if(j.rc===0&&j.import_dir){$("#imBar").style.width="100%";S.imRun=null;await loadImportTab();showImport(j.import_dir)}}
     if(j.kind==="video"){$("#vTitle").textContent=j.rc===0?"Video ready":"Video failed: see the messages below";
       if(j.rc===0){$("#vBar").style.width="100%";await loadVideoTab();playVideo(S.sets.find(s=>s.set_id===$("#vSet").value))}}
     if(!$('[data-pane="files"]').classList.contains("hidden"))loadFiles()}}

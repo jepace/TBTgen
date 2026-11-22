@@ -72,6 +72,17 @@ class SheetWriter:
         r = self._call("upsert", tab=tab, key=key or None, values={k: clean(v) for k, v in values.items()})
         return r.get("id")
 
+    def append(self, tab, rows, batch=200):
+        """Adds many rows; returns the new IDs (Questions/Categories) in order."""
+        ids = []
+        for i in range(0, len(rows), batch):
+            chunk = rows[i:i + batch]
+            for r in chunk:
+                check_cols(tab, r)
+            r = self._call("append", tab=tab, rows=[{k: clean(v) for k, v in x.items()} for x in chunk])
+            ids += r.get("ids") or [None] * len(chunk)
+        return ids
+
     def replace(self, tab, match, rows):
         check_cols(tab, match)
         for r in rows:
@@ -154,6 +165,31 @@ class XlsxWriter:
         self._write(ws, hdr, self._last_row(ws) + 1, full)
         self._save(wb)
         return new_id or full.get(EDITABLE[tab][0])
+
+    def append(self, tab, rows):
+        for r in rows:
+            check_cols(tab, r)
+        if not rows:
+            return []
+        wb, ws, hdr = self._open(tab)
+        ids = []
+        nxt = None
+        if tab in ID_RULES:
+            prefix, width = ID_RULES[tab]
+            used = [int(str(ws.cell(r, 1).value)[1:]) for r in range(2, ws.max_row + 1)
+                    if str(ws.cell(r, 1).value or "").startswith(prefix) and str(ws.cell(r, 1).value)[1:].isdigit()]
+            nxt = max(used, default=0) + 1
+        row = self._last_row(ws) + 1
+        for r in rows:
+            full = dict(r)
+            if tab in ID_RULES and not full.get(EDITABLE[tab][0]):
+                full[EDITABLE[tab][0]] = f"{ID_RULES[tab][0]}{nxt:0{ID_RULES[tab][1]}d}"
+                nxt += 1
+            ids.append(full.get(EDITABLE[tab][0]) if tab in ID_RULES else None)
+            self._write(ws, hdr, row, full)
+            row += 1
+        self._save(wb)
+        return ids
 
     def replace(self, tab, match, rows):
         check_cols(tab, match)

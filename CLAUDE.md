@@ -55,6 +55,13 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   aliases). App: set_mix (per-set counts), audience_fit (flag audience gens < 25% of tagged questions),
   question filter, editor ticks. AI: tag_generations (effort low, no web), category_ideas (no questions),
   generate(..., generations). Live sheet got the two columns (Questions L, Venues I).
+- Deck importer: `keynote_read.py` decodes Keynote IWA (snappy + generic protobuf walk: show object type 2 field 3 =
+  slide nodes (type 4) -> slide (5); text storages type 2001 field 3; drawables 3000-3099 carry data ids matched to
+  Data/*-<id>.ext) and .pptx; `import_decks.py` classifies slides (intro / Question N / answer), dedupes by
+  normalised question+answer, writes imports/<run>/import.json + review.xlsx; apply_import() bulk-appends via the
+  new "append" action (gs + bank_write) and remembers applied keys in applied.json. Tested on Troy's (trimmed)
+  sample .key, a single-file .key built from it, and a generated .pptx (all 45 questions recovered). Keynote '09
+  (index.apxl) path is untested.
 - Video style parity idea (not done): one shared layout spec used by both the pptx builder and video.py. Data cached until
   "Reload data". `build.check_sets()` = per-set checks without a schedule.
 - Future idea (not started): an AI voice host (TTS, possibly a licensed

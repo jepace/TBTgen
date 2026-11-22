@@ -96,6 +96,21 @@ Venues have an **audience** (who usually plays there). Then:
 - the Questions tab can filter by generation (or "Not tagged yet");
 - Generate with AI and Category ideas can aim at chosen generations.
 
+## Importing old decks
+`python3 import_decks.py FOLDER [--pictures] [--clips]` or the app's **Import** tab ("Choose folder…" on a Mac).
+Reads Keynote (.key, folder or single-file; Keynote 6+ fully, '09-era best effort) and PowerPoint (.pptx) decks
+directly, with no Keynote needed. It follows the Trivia By Troy pattern: "Questions 1 - 5" intros give the
+categories (title, blurb, music/movie/bonus), "Question N" slides the questions (+ picture/clip), and the answer
+slides (same question, answer added) the answers and answer pictures. Repeats across decks are merged, with every
+appearance (deck, date from the file name, venue if the path names one) kept.
+- Pictures and clips are optional; unticked, they're only counted (with total MB) so you can judge the space first.
+  TIFF / JPEG XL / HEIC pictures are converted to JPEG (on a Mac via `sips` if Pillow can't).
+- Output in `imports/<date-time>/`: `review.xlsx` (Decks, Categories, Questions, "Check these": missing answers,
+  odd-sized categories, slides that look like questions but weren't recognised) and the extracted media.
+- In the Import tab, tick categories (new ones are pre-ticked) and **Add to the bank**: new questions are appended,
+  existing ones reused, media copied into `assets/…/imported/`, and optionally play history (Usage) is recorded for
+  decks whose file names include a venue. Adding the same import again adds nothing new.
+
 ## AI assistant (optional)
 Runs **only** when you click **Check with AI** (on a question, in a category's editor, or on a set) or
 **Generate with AI…** (in a category's editor). It suggests; nothing changes until you accept.

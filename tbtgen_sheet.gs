@@ -270,6 +270,7 @@ function doGet(e) {
  *  - upsert:  {tab, key:{col:value,...}|null, values:{col:value,...}}
  *             Updates the row whose key columns match; with no key on Questions/Categories, adds a new row and
  *             gives it the next ID. Returns {id, row}.
+ *  - append:  {tab, rows:[{col:value,...}, ...]}  adds rows in one go (new IDs on Questions/Categories); returns {ids}
  *  - replace: {tab, match:{col:value}, rows:[{col:value,...}, ...]}
  *             The rows matching `match` become exactly `rows` (rewritten in place, extras cleared, more appended).
  * Only the tabs/columns in EDITABLE can be written; "(auto)" formula columns are never touched.
@@ -295,6 +296,7 @@ function doPost(e) {
     if (body.action === 'append_usage') return json_(appendUsage_(body.rows || []));
     if (body.action === 'upsert') return json_(upsert_(body.tab, body.key, body.values || {}));
     if (body.action === 'replace') return json_(replaceRows_(body.tab, body.match || {}, body.rows || []));
+    if (body.action === 'append') return json_(appendRows_(body.tab, body.rows || []));
     return json_({ ok: false, error: 'unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -400,4 +402,31 @@ function replaceRows_(tab, match, rows) {
   existing.slice(rows.length).forEach(rowNum =>
     editableIdx.forEach(i => info.sh.getRange(rowNum, i + 1).setValue('')));
   return { ok: true, written: rows.length, cleared: Math.max(0, existing.length - rows.length) };
+}
+
+function appendRows_(tab, rows) {
+  const info = tabInfo_(tab);
+  rows.forEach(r => checkCols_(tab, r));
+  if (!rows.length) return { ok: true, ids: [] };
+  const rule = ID_RULES[tab];
+  const idCol = EDITABLE[tab][0];
+  let next = rule ? nextNumber_(info.sh, rule) : 0;
+  const ids = [];
+  const width = info.hdr.length;
+  const first = lastDataRow_(info.sh) + 1;
+  // only touch editable columns, so "(auto)" formula columns keep their formulas
+  const cols = EDITABLE[tab].map(c => info.hdr.indexOf(c)).filter(i => i >= 0);
+  const block = rows.map(r => {
+    const full = Object.assign({}, r);
+    if (rule && !full[idCol]) full[idCol] = rule.prefix + String(next++).padStart(rule.width, '0');
+    ids.push(rule ? full[idCol] : null);
+    return full;
+  });
+  cols.forEach(ci => {
+    const name = info.hdr[ci];
+    const values = block.map(full => [toCell_(name, full[name])]);
+    info.sh.getRange(first, ci + 1, values.length, 1).setValues(values);
+    if (name === 'date') info.sh.getRange(first, ci + 1, values.length, 1).setNumberFormat('yyyy-mm-dd');
+  });
+  return { ok: true, ids: ids, first_row: first, width: width };
 }

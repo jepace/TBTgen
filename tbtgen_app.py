@@ -480,6 +480,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(api_files())
             if u.path == "/api/categories":
                 return self.send_json(api_categories())
+            if u.path == "/api/ai/status":
+                import ai
+                try:
+                    settings = get_bank()["settings"]
+                except Exception:
+                    settings = {}
+                return self.send_json(ai.status(settings))
             if u.path == "/api/venues":
                 return self.send_json(api_venues())
             if u.path == "/api/settings":
@@ -529,6 +536,31 @@ class Handler(BaseHTTPRequestHandler):
             with DATA_LOCK:
                 DATA["bank"] = None  # re-read on next request
             return self.send_json({"ok": True, "id": new_id})
+        if path.startswith("/api/ai/"):
+            import ai
+            try:
+                if path == "/api/ai/keys":
+                    ai.save_keys({k: body.get(k) for k in ("anthropic_api_key", "gemini_api_key")})
+                    return self.send_json({"ok": True})
+                bank = get_bank()
+                if path == "/api/ai/models":
+                    return self.send_json({"models": ai.list_models(bank["settings"], body.get("provider") or None)})
+                if path == "/api/ai/check":
+                    qids = body.get("question_ids") or []
+                    cid = body.get("category_id")
+                    if cid and not qids:
+                        qids = [l["question_id"] for l in bank["links"].get(cid, [])]
+                    ctx = body.get("context") or (bank["cats"].get(cid, {}).get("title", "") if cid else "")
+                    return self.send_json(ai.check_questions(bank, qids, ctx))
+                if path == "/api/ai/generate":
+                    return self.send_json(ai.generate(bank, body.get("topic", ""), body.get("count", 5),
+                                                      body.get("difficulty", "mixed"), body.get("notes", ""),
+                                                      body.get("type", "standard")))
+            except ai.AIError as e:
+                return self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                return self.send_json({"error": f"AI request failed: {e}"}, 500)
+            return self.send_json({"error": "not found"}, 404)
         if path == "/api/upload":
             try:
                 rel = save_upload(body.get("kind", "images"), body.get("name", "file"), body.get("data", ""))
@@ -675,6 +707,13 @@ dialog .db{padding:16px 18px;overflow:auto;max-height:calc(90vh - 130px)}dialog 
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:10px;font-size:14px;z-index:99;opacity:0;transition:opacity .25s;pointer-events:none}
 #toast.show{opacity:1}#toast.err{background:var(--bad);color:#fff}
 select.setpick{font-size:13px;padding:3px 6px}
+.airesult{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+.airesult .q{font-weight:600}.airesult ul{margin:6px 0 6px 18px;padding:0}.airesult li{font-size:14px}
+.sugg{background:var(--hover);border-radius:8px;padding:8px 10px;margin:6px 0;font-size:14px}
+.ai-busy{display:flex;gap:10px;align-items:center;padding:18px 0;color:var(--muted)}
+.spin{width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.gen{display:flex;gap:10px;align-items:flex-start;border-bottom:1px dashed var(--line);padding:9px 0}.gen input{margin-top:4px}
 @media (max-width:760px){.f{grid-template-columns:1fr}.f>label{padding-top:0}.sgrid{grid-template-columns:1fr}}
 @media (max-width:760px){.grid3{grid-template-columns:1fr}.hide-sm{display:none}input[type=search]{min-width:0}}
 </style></head><body><main>
@@ -747,6 +786,22 @@ select.setpick{font-size:13px;padding:3px 6px}
 <div class="card"><h2>Settings</h2><p class="muted small" style="margin-top:0">These live on the spreadsheet's Settings tab and apply to every deck and video.</p>
   <div class="f" id="stForm"><div class="empty">Loading…</div></div>
   <div class="row" style="margin-top:14px"><button class="primary" id="stSave" disabled>Save changes</button><span class="muted small" id="stDirty"></span></div></div>
+<div class="card" id="aiCard"><h2>AI assistant</h2>
+  <p class="muted small" style="margin-top:0">Used only when you click <b>Check with AI</b> or <b>Generate with AI</b>. It suggests; you decide what to keep.
+  Keys are stored only on this computer (tbtgen_config.json), never in the spreadsheet or GitHub.</p>
+  <div class="f">
+    <label>Provider</label><div><select id="aiProvider"><option value="anthropic">Claude (Anthropic)</option><option value="gemini">Gemini (Google)</option></select></div>
+    <label>Model</label><div><div class="pickrow"><input type="text" id="aiModel" list="aiModelList" placeholder="default"><datalist id="aiModelList"></datalist>
+      <button class="sm" id="aiList">List models</button></div><div class="hint" id="aiModelHint"></div></div>
+    <label>Effort</label><div><select id="aiEffort"><option value="low">low (cheapest)</option><option value="medium">medium</option><option value="high">high (most careful)</option></select>
+      <div class="hint">How hard the AI thinks. Higher costs more. Applies to Claude.</div></div>
+    <label>Fact-check online</label><div><label class="row small" style="gap:6px"><input type="checkbox" id="aiWeb"> let the AI search the web to verify facts (recommended; small extra cost per search)</label></div>
+    <label>Claude API key</label><div><input type="password" id="aiKeyA" autocomplete="off" style="width:100%;font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
+      <div class="hint">From console.anthropic.com → API keys. Leave blank to keep the saved one.</div></div>
+    <label>Gemini API key</label><div><input type="password" id="aiKeyG" autocomplete="off" style="width:100%;font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
+      <div class="hint">From aistudio.google.com → Get API key. Leave blank to keep the saved one.</div></div>
+  </div>
+  <div class="row" style="margin-top:14px"><button class="primary" id="aiSave">Save AI settings</button><span class="small muted" id="aiUsage"></span></div></div>
 <div class="card"><h2>Add a setting</h2><div class="pickrow"><input type="text" id="stNewKey" placeholder="key (e.g. video_media_extra_seconds)">
   <input type="text" id="stNewVal" placeholder="value" style="max-width:160px"><input type="text" id="stNewMeaning" placeholder="what it's for (optional)">
   <button id="stAdd">Add</button></div><div class="hint muted small" style="margin-top:6px">Known extras: <span class="mono">video_media_extra_seconds</span> (seconds after a clip in videos, default 10).</div></div>
@@ -823,6 +878,7 @@ function showTab(t){if(!$(`[data-pane="${t}"]`))t="nights";store.set("tab",t);
   if(location.hash!=="#"+t)history.replaceState(null,"","#"+t);
   ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,categories:loadCats,questions:()=>S.loaded.q||loadQuestions(),venues:loadVenues,video:loadVideoTab,files:loadFiles,settings:loadSettings,status:loadStatus}[t]||(()=>{}))()}
 $$("nav a").forEach(a=>a.onclick=()=>showTab(a.dataset.tab));
+window.addEventListener("hashchange",()=>{const t=location.hash.slice(1);if(t&&t!==store.get("tab",""))showTab(t)});
 
 /* ---------- nights ---------- */
 function chips(){$("#days").innerHTML=DAYS.map(d=>`<button class="chip${S.dayOn.has(d)?" on":""}" data-d="${d}">${d}</button>`).join("");
@@ -867,12 +923,13 @@ async function loadSets(){const r=await get("/api/sets").catch(e=>({error:String
     return `<div class="card"><div class="row" style="margin-bottom:10px"><h2 style="margin:0">${esc(s.set_id)}</h2>
       ${s.errors.length?'<span class="tag bad">problems</span>':s.warnings.length?'<span class="tag warn">warnings</span>':'<span class="tag ok">ready</span>'}
       ${s.video?`<span class="tag">video ${fmtLen(s.video.length_seconds)}</span>`:""}<span class="spacer"></span>
-      <button class="sm" data-editset="${esc(s.set_id)}">Edit set</button>
+      <button class="sm" data-editset="${esc(s.set_id)}">Edit set</button><button class="sm" data-aiset="${esc(s.set_id)}">Check with AI</button>
       <button class="sm" data-video="${esc(s.set_id)}">${s.video?"Watch / remake video":"Make video"}</button></div>
       <div class="grid3">${rounds}</div><div class="small muted" style="margin-top:10px">Nights: ${nights}</div>
       ${probs?`<div style="margin-top:8px">${probs}</div>`:""}</div>`}).join(""):`<div class="card empty">No sets on the Sets tab yet.</div>`;
   $$("[data-video]").forEach(b=>b.onclick=()=>{store.set("vSet",b.dataset.video);showTab("video")});
-  $$("[data-editset]").forEach(b=>b.onclick=()=>editSet(S.sets.find(x=>x.set_id===b.dataset.editset)))}
+  $$("[data-editset]").forEach(b=>b.onclick=()=>editSet(S.sets.find(x=>x.set_id===b.dataset.editset)));
+  $$("[data-aiset]").forEach(b=>b.onclick=()=>aiCheckSet(S.sets.find(x=>x.set_id===b.dataset.aiset)))}
 
 /* ---------- questions ---------- */
 async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$("#qCat").value;
@@ -896,8 +953,9 @@ async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$
       ${x.notes?`<div class="small muted">Notes: ${esc(x.notes)}</div>`:""}
       <div class="small" style="margin-top:6px">In: ${x.categories.map(c=>`${esc(c.title)} <span class="muted mono">${esc(c.id)}</span>`).join(", ")||"no category"}</div>
       <div class="small muted" style="margin-top:4px">${x.history.length?"Asked: "+x.history.map(h=>`${fmtDate(h.date)} ${esc(h.venue)}`).join(" · "):"Never asked yet"}</div>
-      <div style="margin-top:10px"><button class="sm primary" data-editq>Edit question</button></div></div></div></td>`;
+      <div style="margin-top:10px" class="row"><button class="sm primary" data-editq>Edit question</button><button class="sm" data-aiq>Check with AI</button></div></div></div></td>`;
     d.querySelector("[data-editq]").onclick=()=>editQuestion(x,()=>loadQuestions());
+    d.querySelector("[data-aiq]").onclick=()=>aiCheck({question_ids:[x.id]},`Check: ${x.id}`,1,()=>loadQuestions());
     tr.after(d)})}
 $("#qSearch").oninput=()=>{clearTimeout(S.qTimer);S.qTimer=setTimeout(loadQuestions,250)};$("#qCat").onchange=loadQuestions;
 
@@ -951,6 +1009,12 @@ async function loadStatus(){const s=await get("/api/status");const ok=b=>b?'<spa
   let html=`<div class="card"><h2>Setup</h2><div class="kv">${rows.map(([k,v])=>`<div>${k}</div><div>${v}</div>`).join("")}</div>
     <div class="row" style="margin-top:12px"><button id="testConn">${s.config?"Test Google Sheet connection":"Re-read spreadsheet"}</button><span id="testRes" class="small"></span></div></div>`;
   if(s.error)html+=`<div class="card note bad">Last load failed: ${esc(s.error)}</div>`;
+  const ai=await get("/api/ai/status").catch(()=>null);
+  if(ai)html+=`<div class="card"><h2>AI assistant <button class="sm" onclick="showTab('settings')" style="margin-left:8px">Set up</button></h2><div class="kv">
+    <div>Provider</div><div>${ai.provider==="anthropic"?"Claude (Anthropic)":"Gemini (Google)"} · ${esc(ai.model||"no model picked")}</div>
+    <div>Python package</div><div>${ok(ai.sdk[ai.provider])} ${ai.sdk[ai.provider]?"installed":`missing: <span class="mono">python3 -m pip install --user --break-system-packages ${ai.provider==="anthropic"?"anthropic":"google-genai"}</span>`}</div>
+    <div>API key</div><div>${ok(ai.keys[ai.provider])} ${ai.keys[ai.provider]?"saved":"not set"}</div>
+    <div>This month</div><div>${ai.usage.calls} request${ai.usage.calls==1?"":"s"} · about $${ai.usage.cost_usd.toFixed(2)}${ai.usage.unpriced_calls?` (+${ai.usage.unpriced_calls} Gemini, not priced)`:""}${ai.usage.web_searches?` · ${ai.usage.web_searches} web searches`:""}</div></div></div>`;
   if(s.counts)html+=`<div class="card"><h2>In the spreadsheet</h2><div class="kv">${Object.entries(s.counts).map(([k,v])=>`<div>${esc(k)}</div><div>${v}</div>`).join("")}</div></div>`;
   if(s.assets_missing&&s.assets_missing.length)html+=`<div class="card note">Files referenced by questions but not in the assets folder:<br><span class="mono">${s.assets_missing.map(esc).join("<br>")}</span></div>`;
   if(s.fonts)html+=`<div class="card"><h2>Video fonts</h2><p class="muted small" style="margin-top:0">Decks use Trebuchet MS, Savoye LET and Brush Script MT by name. Videos draw text themselves with these font files:</p>
@@ -1034,7 +1098,8 @@ async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!
     <label>Retired</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="retired" ${c.retired?"checked":""}> don't use this category any more</label></div>
     <label>Questions</label><div><div id="slots"></div>
       <div class="pickrow" style="margin-top:8px"><input type="text" id="qFind" placeholder="Find a question to add (text, answer or ID)…"><button class="sm" id="qNewHere">New question…</button></div>
-      <div class="res hidden" id="qFound"></div><div class="hint">A category needs exactly 5 questions. A question can be in more than one category.</div></div></div>`,
+      <div class="res hidden" id="qFound"></div><div class="hint">A category needs exactly 5 questions. A question can be in more than one category.</div>
+      <div class="row" style="margin-top:10px"><button class="sm" id="aiGenHere">Generate with AI…</button><button class="sm" id="aiCheckHere">Check these with AI</button></div></div></div>`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Create category":"Save","primary",async dd=>{
       const v={title:val(dd,'[data-f=title]'),blurb:val(dd,'[data-f=blurb]'),type:val(dd,'[data-f=type]'),season_tag:val(dd,'[data-f=season_tag]'),
         notes:val(dd,'[data-f=notes]'),retired:dd.querySelector('[data-f=retired]').checked?"Y":""};
@@ -1057,7 +1122,12 @@ async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!
       <button class="sm" data-add="${esc(x.id)}" ${slots.length>=5||slots.some(s=>s.id===x.id)?"disabled":""}>${slots.some(s=>s.id===x.id)?"Added":"Add"}</button></div>`).join(""):'<div class="muted small">No matches</div>';
     box.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{const x=rs.find(y=>y.id===b.dataset.add);slots.push({id:x.id,question:x.question,answer:x.answer});draw();find()})};
   d.querySelector("#qFind").oninput=()=>{clearTimeout(ft);ft=setTimeout(find,250)};
-  d.querySelector("#qNewHere").onclick=()=>editQuestion(null,(id,v)=>{if(slots.length<5){slots.push({id,question:v.question,answer:v.answer});draw()}},2);draw()}
+  d.querySelector("#qNewHere").onclick=()=>editQuestion(null,(id,v)=>{if(slots.length<5){slots.push({id,question:v.question,answer:v.answer});draw()}},2);
+  d.querySelector("#aiCheckHere").onclick=()=>{if(!slots.length){toast("Add some questions first",true);return}
+    aiCheck({question_ids:slots.map(q=>q.id),context:val(d,'[data-f=title]')},`Check: ${val(d,'[data-f=title]')||"category"}`,2,()=>{})};
+  d.querySelector("#aiGenHere").onclick=()=>aiGenerate({title:val(d,'[data-f=title]'),type:val(d,'[data-f=type]'),room:5-slots.length,
+    blurbEmpty:!val(d,'[data-f=blurb]'),onAdd:(added,blurb)=>{added.forEach(q=>{if(slots.length<5)slots.push(q)});draw();
+      if(blurb)d.querySelector('[data-f=blurb]').value=blurb;if(!val(d,'[data-f=title]')&&added.topic)d.querySelector('[data-f=title]').value=added.topic}});draw()}
 
 /* sets */
 function nextSetId(){const ids=(S.sets||[]).map(s=>s.set_id);const now=new Date(Date.now()+7*864e5);
@@ -1161,10 +1231,10 @@ const KNOWN_SETTINGS={
   calendar_id:{label:"Google Calendar ID",type:"text",help:"Used by TBTgen → Pull schedule from calendar in the sheet. Ends in @group.calendar.google.com."}};
 async function loadSettings(){const r=await get("/api/settings").catch(e=>({error:String(e)}));
   if(r.error){$("#stForm").innerHTML=`<div class="note bad">${esc(r.error)}</div>`;return}S.settings=r.settings;
-  $("#stForm").innerHTML=r.settings.map(st=>{const k=KNOWN_SETTINGS[st.key]||{label:st.key,type:"text",help:st.meaning};
+  $("#stForm").innerHTML=r.settings.filter(st=>!st.key.startsWith("ai_")).map(st=>{const k=KNOWN_SETTINGS[st.key]||{label:st.key,type:"text",help:st.meaning};
     return `<label title="${esc(st.key)}">${esc(k.label)}</label><div><input type="text" data-key="${esc(st.key)}" data-type="${k.type}" value="${esc(st.value)}"
       ${k.type==="int"?`inputmode="numeric" style="max-width:140px"`:""}><div class="hint"><span class="mono">${esc(st.key)}</span>${k.help||st.meaning?" · "+esc(k.help||st.meaning):""}</div></div>`}).join("")||'<div class="muted">The Settings tab is empty.</div>';
-  $$("#stForm input").forEach(i=>i.oninput=markDirty);markDirty()}
+  $$("#stForm input").forEach(i=>i.oninput=markDirty);markDirty();loadAiCard()}
 function changedSettings(){return $$("#stForm input").filter(i=>{const st=S.settings.find(x=>x.key===i.dataset.key);return st&&i.value.trim()!==st.value})}
 function markDirty(){const ch=changedSettings();$("#stSave").disabled=!ch.length;$("#stDirty").textContent=ch.length?`${ch.length} unsaved change${ch.length>1?"s":""}`:""}
 $("#stSave").onclick=async()=>{const ch=changedSettings();
@@ -1179,6 +1249,99 @@ $("#stAdd").onclick=async()=>{const key=$("#stNewKey").value.trim(),v=$("#stNewV
   if((S.settings||[]).some(x=>x.key===key)){toast(`${key} is already there: change it above`,true);return}
   const r=await edit({op:"upsert",tab:"Settings",key:{key},values:{value:/^\d+$/.test(v)?Number(v):v,meaning:m}});if(!r)return;
   ["#stNewKey","#stNewVal","#stNewMeaning"].forEach(x=>$(x).value="");toast(`Added ${key}`);loadSettings()};
+
+/* ---------- AI assistant ---------- */
+const VERDICT={ok:["ok","Looks good"],revise:["warn","Suggest changes"],wrong:["bad","Answer looks wrong"],unchecked:["","Not checked"]};
+const busy=msg=>`<div class="ai-busy"><div class="spin"></div><div>${esc(msg)}</div></div>`;
+async function aiReady(){const st=await get("/api/ai/status");const p=st.provider;
+  if(!st.sdk[p]){toast(`Install the ${p==="anthropic"?"anthropic":"google-genai"} Python package first (see Settings → AI assistant)`,true);return null}
+  if(!st.keys[p]){toast(`Add your ${p==="anthropic"?"Claude":"Gemini"} API key on the Settings tab first`,true);showTab("settings");return null}
+  if(p==="gemini"&&!st.model){toast("Pick a Gemini model on the Settings tab first",true);showTab("settings");return null}return st}
+function aiMeta(r){return `${esc(r.provider)} · ${esc(r.model)}${r.web?` · ${r.web_searches} web search${r.web_searches==1?"":"es"}`:""}${r.cost_usd!=null?` · about $${r.cost_usd.toFixed(3)}`:""}`}
+function renderAiResults(list){return list.map((r,i)=>{const [cls,label]=VERDICT[r.verdict]||VERDICT.unchecked;const sug=r.suggested_question||r.suggested_answer;
+  return `<div class="airesult"><div class="row" style="margin-bottom:4px"><span class="tag ${cls}">${label}</span><span class="mono muted small">${esc(r.id)}</span>
+    ${r.verdict!=="unchecked"?`<span class="muted small">confidence: ${esc(r.confidence)}</span>`:""}<span class="spacer"></span>
+    ${r.verdict!=="ok"&&r.verdict!=="unchecked"||r.accept_also.length?`<button class="sm primary" data-apply="${i}">Use suggestion…</button>`:""}</div>
+    <div class="q">${esc(r.question)}</div><div class="small">Answer: <strong>${esc(r.answer)}</strong></div>
+    ${r.issues.length?`<ul>${r.issues.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
+    ${sug?`<div class="sugg">${r.suggested_question?`<div><span class="muted">Suggested question:</span> ${esc(r.suggested_question)}</div>`:""}${r.suggested_answer?`<div><span class="muted">Suggested answer:</span> <strong>${esc(r.suggested_answer)}</strong></div>`:""}</div>`:""}
+    ${r.accept_also.length?`<div class="small"><span class="muted">Also accept:</span> ${esc(r.accept_also.join(", "))}</div>`:""}
+    ${r.fun_fact?`<div class="small"><span class="muted">Fun fact:</span> ${esc(r.fun_fact)}</div>`:""}
+    ${r.sources.length?`<div class="small muted">Sources: ${r.sources.map(u=>`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\/(www\.)?/,"").split("/")[0])}</a>`).join(" · ")}</div>`:""}</div>`}).join("")}
+function noteWith(notes,r){const add=[];if(r.accept_also.length)add.push("Accept also: "+r.accept_also.join(", "));if(r.fun_fact)add.push("Fun fact: "+r.fun_fact);
+  return [notes,...add].filter(Boolean).join(" | ").slice(0,500)}
+async function aiCheck(body,title,which,after){if(!await aiReady())return;
+  const d=dialog(which,title,busy("Checking… this can take up to a minute, longer when it searches the web."),[["spacer"],["Close","",dd=>dd.close()]]);
+  const r=await post("/api/ai/check",body).catch(e=>({error:String(e)}));if(!d.open)return;
+  const body_=d.querySelector(".db");if(r.error){body_.innerHTML=`<div class="note bad">${esc(r.error)}</div>`;return}
+  showAiResults(d,r.results,aiMeta(r),after)}
+function showAiResults(d,results,meta,after){const body_=d.querySelector(".db");const bad=results.filter(x=>x.verdict!=="ok").length;
+  body_.innerHTML=`<div class="row small muted" style="margin-bottom:10px">${bad?`${bad} of ${results.length} need a look`:`All ${results.length} look good`} · ${meta}</div>${renderAiResults(results)}
+    <p class="muted small">AI can be wrong: check anything surprising before you change a question.</p>`;
+  body_.querySelectorAll("[data-apply]").forEach(b=>b.onclick=async()=>{const r=results[+b.dataset.apply];
+    const qs=await get("/api/questions?q="+encodeURIComponent(r.id));const q=(qs.results||[]).find(x=>x.id===r.id);if(!q){toast("Couldn't find "+r.id,true);return}
+    const pre={...q,question:r.suggested_question||q.question,answer:r.suggested_answer||q.answer,notes:noteWith(q.notes,r)};
+    editQuestion(pre,()=>{b.textContent="Saved ✓";b.disabled=true;if(after)after()},d.id==="dlg2"?1:2)})}
+async function aiCheckSet(set){if(!set||!await aiReady())return;const cats=set.rounds.flat();
+  const d=dialog(1,`Check set ${set.set_id} with AI`,busy(`Checking ${cats.length} categories, one at a time…`),[["spacer"],["Close","",dd=>dd.close()]]);
+  const all=[];let meta="",cost=0,searches=0;
+  for(const [i,c] of cats.entries()){if(!d.open)return;d.querySelector(".ai-busy div:last-child").textContent=`Checking ${c.title} (${i+1} of ${cats.length})…`;
+    const r=await post("/api/ai/check",{category_id:c.category_id}).catch(e=>({error:String(e)}));
+    if(r.error){d.querySelector(".db").innerHTML=`<div class="note bad">${esc(c.title)}: ${esc(r.error)}</div>`;return}
+    r.results.forEach(x=>x.id=x.id);all.push(...r.results);cost+=r.cost_usd||0;searches+=r.web_searches||0;meta=`${esc(r.provider)} · ${esc(r.model)}`}
+  showAiResults(d,all,`${meta}${searches?` · ${searches} web searches`:""}${cost?` · about $${cost.toFixed(2)}`:""}`,()=>{})}
+async function aiGenerate(opts){if(!await aiReady())return;const st=S.aiStatus;
+  const d=dialog(2,"Generate questions with AI",`<div class="f">
+    <label>Topic</label><div><input type="text" id="gTopic" value="${esc(opts.title||"")}" placeholder="e.g. Famous Thanksgiving TV episodes"></div>
+    <label>How many</label><div><input type="text" id="gCount" value="${Math.max(1,Math.min(10,opts.room>0?opts.room:5))}" style="max-width:80px"><div class="hint">You'll pick which ones to keep</div></div>
+    <label>Difficulty</label><div><select id="gDiff"><option value="mixed">a mix</option><option>easy</option><option>medium</option><option>hard</option></select></div>
+    <label>Notes</label><div><input type="text" id="gNotes" placeholder="optional: angle, things to include or avoid"></div></div><div id="gOut"></div>`,
+    [["spacer"],["Close","",dd=>dd.close()],["Generate","primary",async dd=>{
+      const topic=dd.querySelector("#gTopic").value.trim();if(!topic){toast("Give a topic",true);return}
+      const out=dd.querySelector("#gOut");out.innerHTML=busy("Writing questions… this can take a minute.");
+      const r=await post("/api/ai/generate",{topic,count:+dd.querySelector("#gCount").value||5,difficulty:dd.querySelector("#gDiff").value,
+        notes:dd.querySelector("#gNotes").value,type:opts.type||"standard"}).catch(e=>({error:String(e)}));
+      if(r.error){out.innerHTML=`<div class="note bad">${esc(r.error)}</div>`;return}
+      out.innerHTML=`<h4 style="margin:14px 0 4px">Pick the ones to keep</h4><div class="small muted">${aiMeta(r)}</div>
+        ${r.questions.map((q,i)=>`<label class="gen"><input type="checkbox" data-g="${i}" ${i<Math.max(opts.room,0)?"checked":""}>
+          <div><div>${esc(q.question)}</div><div class="small"><strong>${esc(q.answer)}</strong>${q.accept_also.length?` <span class="muted">(also: ${esc(q.accept_also.join(", "))})</span>`:""}
+          ${q.difficulty?` <span class="tag">${esc(q.difficulty)}</span>`:""}</div>
+          ${q.fun_fact?`<div class="small muted">Fun fact: ${esc(q.fun_fact)}</div>`:""}${q.picture_idea?`<div class="small muted">Picture idea: ${esc(q.picture_idea)}</div>`:""}
+          ${q.sources.length?`<div class="small muted">Sources: ${q.sources.map(u=>`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\/(www\.)?/,"").split("/")[0])}</a>`).join(" · ")}</div>`:""}</div></label>`).join("")}
+        ${r.blurb?`<label class="gen"><input type="checkbox" id="gBlurb" ${opts.blurbEmpty?"checked":""}><div><div class="small muted">Category intro:</div><div>${esc(r.blurb)}</div></div></label>`:""}
+        <div class="row" style="margin-top:10px"><button class="primary" id="gAdd">Add selected to the bank</button><span class="small muted">Room for ${Math.max(opts.room,0)} more in this category</span></div>`;
+      out.querySelector("#gAdd").onclick=async()=>{const pick=[...out.querySelectorAll("[data-g]:checked")].map(c=>r.questions[+c.dataset.g]);
+        if(!pick.length){toast("Tick at least one question",true);return}
+        if(pick.length>Math.max(opts.room,0)&&!confirm(`Only ${Math.max(opts.room,0)} fit in this category. Add all ${pick.length} to the bank anyway (the extras won't be in the category)?`))return;
+        out.querySelector("#gAdd").disabled=true;const added=[];
+        for(const q of pick){const notes=[`AI-generated (${r.model})`,q.accept_also.length?"Accept also: "+q.accept_also.join(", "):"",q.fun_fact?"Fun fact: "+q.fun_fact:"",q.picture_idea?"Picture idea: "+q.picture_idea:""].filter(Boolean).join(" | ").slice(0,500);
+          const res=await edit({op:"upsert",tab:"Questions",key:null,values:{question:q.question,answer:q.answer,notes}});if(!res)break;
+          added.push({id:res.id,question:q.question,answer:q.answer})}
+        added.topic=topic;toast(`Added ${added.length} question${added.length==1?"":"s"} to the bank`);
+        opts.onAdd(added,(out.querySelector("#gBlurb")||{}).checked?r.blurb:"");dd.close()}}]])}
+
+/* AI settings */
+async function loadAiCard(){const st=await get("/api/ai/status");S.aiStatus=st;
+  $("#aiProvider").value=st.provider;$("#aiModel").value=(S.settings||[]).find(x=>x.key==="ai_model")?.value||"";
+  $("#aiModel").placeholder=st.provider==="anthropic"?"claude-opus-5-5 (default)":"pick one with List models";
+  $("#aiEffort").value=st.effort;$("#aiWeb").checked=st.web;
+  $("#aiKeyA").placeholder=st.keys.anthropic?"saved ✓ (type to replace)":"not set";$("#aiKeyG").placeholder=st.keys.gemini?"saved ✓ (type to replace)":"not set";
+  const miss=["anthropic","gemini"].filter(p=>!st.sdk[p]).map(p=>p==="anthropic"?"anthropic":"google-genai");
+  $("#aiModelHint").innerHTML=miss.length?`To use ${miss.join(" / ")}, install it: <span class="mono">python3 -m pip install --user --break-system-packages ${miss.join(" ")}</span>`:"Blank = the default for the provider.";
+  const u=st.usage;$("#aiUsage").textContent=u.calls?`This month: ${u.calls} AI request${u.calls==1?"":"s"} · about $${u.cost_usd.toFixed(2)}${u.unpriced_calls?` (+${u.unpriced_calls} Gemini, not priced)`:""}${u.web_searches?` · ${u.web_searches} web searches`:""}`:"No AI requests yet this month."}
+$("#aiProvider").onchange=()=>{$("#aiModel").value="";$("#aiModelList").innerHTML="";$("#aiModel").placeholder=$("#aiProvider").value==="anthropic"?"claude-opus-5-5 (default)":"pick one with List models"};
+$("#aiList").onclick=async()=>{$("#aiList").disabled=true;$("#aiList").textContent="Asking…";
+  const r=await post("/api/ai/models",{provider:$("#aiProvider").value}).catch(e=>({error:String(e)}));$("#aiList").disabled=false;$("#aiList").textContent="List models";
+  if(r.error){toast(r.error,true);return}$("#aiModelList").innerHTML=r.models.map(m=>`<option value="${esc(m)}">`).join("");
+  toast(`${r.models.length} models available: click the Model box to pick one`)};
+$("#aiSave").onclick=async()=>{const keys={anthropic_api_key:$("#aiKeyA").value.trim()||null,gemini_api_key:$("#aiKeyG").value.trim()||null};
+  if(keys.anthropic_api_key||keys.gemini_api_key){const r=await post("/api/ai/keys",keys);if(r.error){toast(r.error,true);return}}
+  const want={ai_provider:$("#aiProvider").value,ai_model:$("#aiModel").value.trim(),ai_effort:$("#aiEffort").value,ai_web_search:$("#aiWeb").checked?"Y":"N"};
+  const have=Object.fromEntries((S.settings||[]).map(x=>[x.key,x.value]));
+  const meaning={ai_provider:"AI used by Check/Generate: anthropic or gemini",ai_model:"AI model (blank = provider default)",ai_effort:"AI effort: low, medium or high",ai_web_search:"Y = AI may search the web to verify facts"};
+  for(const [k,v] of Object.entries(want)){if(have[k]===v||(have[k]===undefined&&v===""))continue;
+    const vals=have[k]===undefined?{value:v,meaning:meaning[k]}:{value:v};if(!await edit({op:"upsert",tab:"Settings",key:{key:k},values:vals}))return}
+  $("#aiKeyA").value="";$("#aiKeyG").value="";toast("AI settings saved");await loadSettings()};
 
 /* ---------- runs (shared) ---------- */
 function cls(l){return/^(ERROR|Stopped|Google Sheet:|Traceback|Video failed|Nothing to build)/.test(l)?"ln-err":/^WARNING/.test(l)?"ln-warn":/^built/.test(l)?"ln-ok":/^(SKIPPED|NOTE)/.test(l)?"ln-skip":""}

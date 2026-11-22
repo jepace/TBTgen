@@ -82,6 +82,22 @@ New version) or the app's saves will be refused. Uploaded pictures/clips go into
 The first time, macOS may refuse to open a downloaded .command file: right-click it → Open → Open.
 Leave the Terminal window open while using the app; close it or click Quit to stop.
 
+## AI assistant (optional)
+Runs **only** when you click **Check with AI** (on a question, in a category's editor, or on a set) or
+**Generate with AI…** (in a category's editor). It suggests; nothing changes until you accept.
+- **Check**: is the answer correct, is it the single best answer (what else should be accepted), is the wording
+  precise (dates for facts that change, vague superlatives)? Shows issues, a suggested rewrite, fun fact and
+  sources; **Use suggestion…** opens the question editor pre-filled.
+- **Generate**: a topic, how many, difficulty and notes → candidate questions in your style (it's shown examples
+  from your bank and the existing questions to avoid), plus a category blurb. Tick the ones to keep.
+- Providers: **Claude** (Anthropic; default model claude-opus-5-5) or **Gemini** (Google; pick a model with
+  List models). Set up on the Settings tab → AI assistant: provider, model, effort, web fact-checking, API keys.
+- Install the package for the provider you use:
+  `python3 -m pip install --user --break-system-packages anthropic` (and/or `google-genai`).
+- Keys are saved in `tbtgen_config.json` (not in Git or the spreadsheet). Spend is logged to `ai_usage.jsonl` and
+  shown on the Settings and Status tabs (Claude priced; Gemini shown as unpriced). Claude requests use Anthropic's
+  server-side fallback: if the model declines a request, the API retries it on a fallback model.
+
 ## At-home video
 `python3 build.py --video SET_ID` (or the Video tab) makes `out/video/SET_ID at-home.mp4`: title, how to play,
 3 rounds with the logo countdown on every question (default 30 s), "Pencils down" and the answers after each

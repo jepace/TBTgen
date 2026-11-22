@@ -16,6 +16,7 @@ Otherwise trivia_bank.xlsx is used; --bank FILE.xlsx forces a file.
   python3 build.py --day wed               # every Wednesday on the schedule
   python3 build.py --from 2026-11-23 --to 2026-12-06
   python3 build.py --venue wine_press,pops
+  python3 build.py --video 2026-W48-A      # at-home video of a set -> out/video/
   python3 build.py --record                # also log the questions used to the Usage tab
   python3 build.py --check                 # only run the repeat/consistency checks
   python3 build.py --ids                   # only fill in IDs for new questions/categories
@@ -117,8 +118,13 @@ def sheet_call(cfg, action, payload=None):
     return data
 
 
+SHEET_URL = None  # the Google Sheet's own address, when the web app reports it
+
+
 def tables_from_sheet(cfg):
+    global SHEET_URL
     data = sheet_call(cfg, "tables")
+    SHEET_URL = data.get("url") or SHEET_URL
     CACHE.mkdir(exist_ok=True)
     (CACHE / "sheet_snapshot.json").write_text(json.dumps(data["tables"]))   # last copy, for reference
     return data["tables"]
@@ -204,13 +210,11 @@ def short(text, n=60):
 
 
 # ===================================================================== checks
-def check(bank, schedule):
-    """Returns (errors, warnings)."""
+def check_sets(bank, set_ids):
+    """Problems inside the sets themselves (no schedule needed). Returns (errors, warnings)."""
     errs, warns = [], []
-    lookback = int(bank["settings"].get("repeat_lookback_days", 365))
     cat_title = lambda cid: bank["cats"].get(cid, {}).get("title", cid)
-
-    for set_id in sorted({r["set_id"] for r in schedule}):
+    for set_id in sorted(set_ids):
         slots = bank["sets"].get(set_id)
         if not slots:
             errs.append(f"Set {set_id}: not found on the Sets tab")
@@ -249,6 +253,14 @@ def check(bank, schedule):
                         errs.append(f"Question {qid}: missing file assets/{qq[col]}")
         if not bank["tiebreakers"].get(set_id):
             warns.append(f"Set {set_id}: no tiebreaker questions")
+    return errs, warns
+
+
+def check(bank, schedule):
+    """Set problems plus schedule problems (repeats at a venue, team hopping). Returns (errors, warnings)."""
+    errs, warns = check_sets(bank, {r["set_id"] for r in schedule})
+    lookback = int(bank["settings"].get("repeat_lookback_days", 365))
+    cat_title = lambda cid: bank["cats"].get(cid, {}).get("title", cid)
 
     # 1) has this venue already seen these categories / questions (in any category)?
     for r in schedule:
@@ -860,6 +872,11 @@ def main():
     ap.add_argument("--record", action="store_true", help="log the questions used to the Usage tab")
     ap.add_argument("--check", action="store_true", help="only run checks, build nothing")
     ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    ap.add_argument("--video", metavar="SET_ID", help="make the at-home video for this set (out/video/)")
+    ap.add_argument("--video-seconds", type=int, default=30, help="video: seconds per question (default 30)")
+    ap.add_argument("--video-answer-seconds", type=float, default=6, help="video: seconds per answer (default 6)")
+    ap.add_argument("--video-height", type=int, default=720, choices=[720, 1080], help="video: 720 or 1080")
+    ap.add_argument("--video-no-media", action="store_true", help="video: leave out music/movie categories")
     ap.add_argument("--ids", action="store_true", help="(.xlsx only) fill in missing question/category IDs, then stop")
     a = ap.parse_args()
 
@@ -890,6 +907,27 @@ def main():
     missing = [r for r in bank["Questions"] if not r.get("question_id") and r.get("question")]
     if missing:
         print(f"NOTE: {len(missing)} question(s) have no ID yet and can't be used until they do.")
+
+    if a.video:
+        if a.video not in bank["sets"]:
+            sys.exit(f"Set '{a.video}' is not on the Sets tab.")
+        errs, warns = check_sets(bank, {a.video})
+        for w in warns:
+            print("WARNING:", w)
+        for e in errs:
+            print("ERROR:  ", e)
+        if errs:
+            sys.exit("Stopped: fix the problems above.")
+        import video
+        try:
+            path, secs = video.make_video(bank, a.video, a.out, seconds=a.video_seconds,
+                                          answer_seconds=a.video_answer_seconds, height=a.video_height,
+                                          media=not a.video_no_media)
+        except RuntimeError as e:
+            sys.exit(f"Video failed: {e}")
+        print(f"built  {Path(path).relative_to(ROOT) if Path(path).is_relative_to(ROOT) else path}   "
+              f"(length {int(secs // 60)}:{int(secs % 60):02d})")
+        return
     lo = as_date(a.date_from) if a.date_from else None
     hi = as_date(a.date_to) if a.date_to else None
     if a.date:

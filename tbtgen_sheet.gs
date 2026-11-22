@@ -258,7 +258,7 @@ function doGet(e) {
         sh.getRange(1, 1, rows, cols).getValues().map(r => r.map(v =>
           v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : v));
     });
-    return json_({ ok: true, tables: tables });
+    return json_({ ok: true, tables: tables, url: ss.getUrl() });
   } catch (err) {
     return json_({ ok: false, error: String(err) });
   }

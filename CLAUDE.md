@@ -33,8 +33,12 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - Fonts come from Troy's Keynote template: Trebuchet MS (body), Savoye LET (script titles),
   Brush Script MT (bonus labels). Savoye is Mac-only. Sizes were guessed without seeing Savoye rendered.
 - Pending: font sizes/layout review on a Mac, packaging as a real Mac app, venue logos for all venues, real questions in the sheet.
-- Future idea (not started): at-home version. Plan: `build.py --video` renders slides and assembles an MP4 with
-  ffmpeg (at-home pacing: shorter timer, answers per round), then an AI voice host (TTS, possibly a licensed
+- At-home video is BUILT: `video.py` (Pillow draws slides in the deck style, ffmpeg makes one clip per slide
+  in parallel, then concat). `build.py --video SET_ID` / app Video tab. Countdown = 61 PNG frames of the logo
+  filling, overlaid per question. Tested here (fallback fonts); not yet seen on a Mac with the real fonts.
+- App tabs: Nights, Sets, Questions, Video (player with Range support), Files, Status. Data cached until
+  "Reload data". `build.check_sets()` = per-set checks without a schedule.
+- Future idea (not started): an AI voice host (TTS, possibly a licensed
   clone of Troy's voice; Claude-drafted banter with a sheet column to override; pronunciation column).
   Big caveat discussed with the user: publishing song/movie clips and web photos raises copyright issues.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

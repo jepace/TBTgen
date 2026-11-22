@@ -58,6 +58,51 @@ python3 -m pip install --user --break-system-packages python-pptx openpyxl pillo
 affects your account. Prefer a virtual environment? `python3 -m venv .venv` and use `.venv/bin/python`.)
 
 ## The app
+Double-click **TBTgen.command** (or run `python3 tbtgen_app.py`); your browser opens the app.
+- **Nights**: a week of the schedule. Filter weekdays, tick nights, **Check** or **Build** decks;
+  "Log as played" also writes the Usage tab. Nights with no set or an unknown venue can't be ticked.
+- **Sets**: each set's 9 categories by round, bonus, problems, when/where each category was last played,
+  which nights use it, and its video.
+- **Questions**: search the bank (text, answer, ID) or filter by category; click for pictures, clips and history.
+- **Video**: make the at-home video for a set (seconds per question/answer, 720p/1080p, with or without
+  music/movie categories), watch it in the page, download it or open it in your player.
+- **Files**: every deck, answer key and video, with View / Open / Download.
+- **Status**: setup checks, a spreadsheet connection test, counts, the fonts videos use, and the Settings tab.
+The first time, macOS may refuse to open a downloaded .command file: right-click it → Open → Open.
+Leave the Terminal window open while using the app; close it or click Quit to stop.
+
+## At-home video
+`python3 build.py --video SET_ID` (or the Video tab) makes `out/video/SET_ID at-home.mp4`: title, how to play,
+3 rounds with the logo countdown on every question (default 30 s), "Pencils down" and the answers after each
+round, then a thanks card. Music and movie clips play on their questions (clip length + 10 s, or the Settings
+tab's `video_media_extra_seconds`). Options: `--video-seconds`, `--video-answer-seconds`, `--video-height 1080`,
+`--video-no-media`. Needs ffmpeg. Text is drawn with Trebuchet MS / Savoye LET / Brush Script when the
+computer has them (a Mac does). Song/movie clips and web photos may be copyrighted: fine for private use,
+risky to publish.
+
+## Connect the generator to the Google Sheet (once)
+1. In the Trivia Bank sheet: Extensions → Apps Script, paste in `tbtgen_sheet.gs`, Save, reload the sheet.
+2. **TBTgen → Set up generator access…** shows a secret key and these steps:
+   in the Apps Script editor, **Deploy → New deployment → Web app**, Execute as **Me**,
+   Who has access **Anyone**, Deploy, copy the **Web app URL**.
+3. Next to `build.py`, create `tbtgen_config.json` (it's ignored by Git; don't commit it):
+   ```json
+   {"sheet_url": "https://script.google.com/macros/s/…/exec", "token": "the key from step 2"}
+   ```
+Now every run reads the sheet live, and `--record` writes the Usage log back to it.
+Without that file, `trivia_bank.xlsx` is used; `--bank some.xlsx` forces a file.
+If the script changes later: Deploy → Manage deployments → edit → Version: **New version** (same URL).
+To cut off access: **TBTgen → Make a new generator key**.
+
+## Mac setup (once)
+```
+brew install python ffmpeg
+python3 -m pip install --user --break-system-packages python-pptx openpyxl pillow lxml
+```
+(`--break-system-packages` is Homebrew's way of making you confirm a per-user install; with `--user` it only
+affects your account. Prefer a virtual environment? `python3 -m venv .venv` and use `.venv/bin/python`.)
+
+## The app
 Double-click **TBTgen.command** (or run `python3 tbtgen_app.py`). Your browser opens a page showing a week
 of the schedule: pick the week and weekdays, tick nights, then **Check** or **Build**; "Log as played" also
 writes the Usage tab. Nights with no set or an unknown venue are shown but can't be ticked.

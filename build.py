@@ -74,6 +74,14 @@ _GEN_ALIASES = {"boomer": "Boomer", "boomers": "Boomer", "baby boomer": "Boomer"
                 "zoomers": "Gen Z", "z": "Gen Z", "gen alpha": "Gen Alpha", "genalpha": "Gen Alpha", "alpha": "Gen Alpha"}
 
 
+DIFFS = ["easy", "medium", "hard"]
+
+
+def parse_diff(v):
+    v = str(v or "").strip().lower()
+    return {"e": "easy", "m": "medium", "med": "medium", "h": "hard"}.get(v, v) if v else ""
+
+
 def parse_gens(v):
     """'Boomer, gen-x; Millennials' -> ['Boomer', 'Gen X', 'Millennial'] (in GENS order, unknown words dropped)."""
     if isinstance(v, (list, tuple)):

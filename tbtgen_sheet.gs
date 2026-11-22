@@ -276,7 +276,7 @@ function doGet(e) {
  */
 const EDITABLE = {
   Questions: ['question_id', 'question', 'answer', 'question_image', 'answer_image', 'media', 'clip_start', 'clip_end',
-              'seconds', 'retired', 'notes', 'generations'],
+              'seconds', 'retired', 'notes', 'generations', 'difficulty'],
   Categories: ['category_id', 'title', 'blurb', 'type', 'season_tag', 'retired', 'notes'],
   CategoryQuestions: ['category_id', 'position', 'question_id'],
   Sets: ['set_id', 'round', 'slot', 'category_id', 'bonus'],

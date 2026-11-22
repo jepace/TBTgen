@@ -416,17 +416,23 @@ def generate(bank, topic, count=5, difficulty="mixed", notes="", ctype="standard
 
 
 # ------------------------------------------------------------------------------- generations tagging
-TAG_SYSTEM = """You help a bar trivia company balance its games across age groups. For each trivia question, decide which generations of American adults (and kids, for family nights) are likely to know the answer or get the reference:
+TAG_SYSTEM = """You help a bar trivia company balance its games by age group and difficulty. For each trivia question, decide two things.
+
+1) Difficulty, for a typical team of 4-6 adults at a bar with about a minute and no phones:
+   easy = most teams (roughly 70% or more) get it; medium = roughly 30-70% get it; hard = fewer than about 30% get it.
+   Judge the knowledge needed, not the wording. Music/movie clip questions ("Name this song") depend on how famous the song or movie is.
+
+2) Generations likely to know the answer or get the reference:
 Boomer (born 1946-64), Gen X (1965-80), Millennial (1981-96), Gen Z (1997-2012), Gen Alpha (2013+).
 
 Tag a generation when a typical member would plausibly know it from their own life and culture. Evergreen general knowledge (science, geography, holidays, long-running classics) gets every generation old enough to know it. Be realistic: an 80s hit is Boomer/Gen X/older Millennial; a 2020s TikTok trend is Gen Z/Gen Alpha. Most questions get 1-4 tags.
 
 Reply with only a JSON object and no other text:
-{"results": [{"id": "<question id>", "generations": ["Boomer" | "Gen X" | "Millennial" | "Gen Z" | "Gen Alpha"], "why": "<a few words>"}]}"""
+{"results": [{"id": "<question id>", "difficulty": "easy" | "medium" | "hard", "generations": ["Boomer" | "Gen X" | "Millennial" | "Gen Z" | "Gen Alpha"], "why": "<a few words>"}]}"""
 
 
 def tag_generations(bank, qids):
-    """Suggests generation tags. Cheap: low effort, no web search."""
+    """Suggests difficulty and generation tags. Cheap: low effort, no web search."""
     prov, o = provider(bank["settings"], effort="low")
     qs = [(qid, bank["qs"][qid]) for qid in qids if qid in bank["qs"]]
     if not qs:
@@ -440,8 +446,11 @@ def tag_generations(bank, qids):
     results = []
     for qid, q in qs:
         r = got.get(qid, {})
+        d = build.parse_diff(r.get("difficulty"))
         results.append({"id": qid, "question": _s(q["question"]), "answer": _s(q["answer"]),
                         "current": build.parse_gens(q.get("generations")), "suggested": build.parse_gens(r.get("generations")),
+                        "current_difficulty": build.parse_diff(q.get("difficulty")),
+                        "suggested_difficulty": d if d in build.DIFFS else "",
                         "why": _s(r.get("why")), "missing": qid not in got})
     rec = log_usage("tag", o["provider"], usage, len(qs))
     return {"results": results, "provider": prov.name, "model": usage["model"], "cost_usd": rec["cost_usd"]}

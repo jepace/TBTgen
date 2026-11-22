@@ -85,6 +85,10 @@ Leave the Terminal window open while using the app; close it or click Quit to st
 ## Balancing for the crowd (generations)
 Questions have a **generations** tag (Boomer 1946–64, Gen X 1965–80, Millennial 1981–96, Gen Z 1997–2012,
 Gen Alpha 2013+) meaning "likely to know it". Tick them in the question editor or use **Tag ages with AI**.
+Questions also have a **difficulty** (easy / medium / hard, for a typical bar team: easy = most teams get it,
+hard = few do), set in the question editor or by **Tag with AI**, which rates difficulty and generations in one
+cheap request. The Questions tab filters by difficulty (or "Not rated yet"), categories show their spread, and each
+set's mix shows how many easy / medium / hard questions it has.
 Venues have an **audience** (who usually plays there). Then:
 - each set shows an **Age mix** (how many of its questions each generation is likely to know), live in the set editor too;
 - the Nights tab shows each venue's audience and flags "⚠ light on Gen Z" when under a quarter of the set's
@@ -102,8 +106,8 @@ Runs **only** when you click **Check with AI** (on a question, in a category's e
   from your bank and the existing questions to avoid), plus a category blurb. Tick the ones to keep.
 - **Category ideas with AI…** (Categories tab): titles, blurbs and a one-line angle to spark thinking, for an
   optional theme and audience; no questions are written. **Create category…** turns an idea into a new, empty category.
-- **Tag ages with AI** (category editor, or a set): suggests which generations are likely to know each question;
-  adjust the ticks and **Save tags**. Cheap: low effort, no web search.
+- **Tag with AI** (category editor, or a set): rates each question's difficulty and which generations are likely
+  to know it; adjust, then **Save tags**. Cheap: low effort, no web search.
 - Providers: **Claude** (Anthropic; default model claude-opus-5-5) or **Gemini** (Google; pick a model with
   List models). Set up on the Settings tab → AI assistant: provider, model, effort, web fact-checking, API keys.
 - Install the package for the provider you use:

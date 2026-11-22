@@ -200,11 +200,20 @@ GEN.update(dict(zip([("holiday_travel", n) for n in range(1, 6)], [
 GEN.update(dict(zip([("movies_tg", n) for n in range(1, 6)], [
     "Gen X, Millennial", "Gen Z, Gen Alpha", "Gen X, Millennial", "Boomer, Gen X", "Boomer"])))
 
+# Sample difficulty (for a typical bar team): easy = most teams get it, hard = few do
+HARD = {("turkey", 3), ("turkey", 5), ("tg_potluck", 1), ("tg_potluck", 3), ("tg_mishaps", 4), ("nov_bdays", 2),
+        ("music_tg", 1), ("music_tg", 4), ("music_tg", 5), ("movies_tg", 3), ("movies_tg", 5)}
+EASY = {("turkey", 1), ("turkey", 2), ("tg_potluck", 2), ("tg_potluck", 4), ("tg_mishaps", 3), ("nov_bdays", 1),
+        ("nov_bdays", 3), ("nov_pop", 1), ("nov_pop", 3), ("nov_pop", 4), ("holiday_travel", 1), ("holiday_travel", 2),
+        ("potluck_1", 1), ("potluck_1", 2), ("potluck_1", 3)}
+DIFF = {k: "hard" if k in HARD else "easy" if k in EASY else "medium" for k in [(c, n) for c, n, *_ in Q]}
+DIFF[("holiday_travel", 5)] = ""  # one left unrated on purpose
+
 sheet("Questions", ["question_id", "question", "answer", "question_image", "answer_image", "media",
-                    "clip_start", "clip_end", "seconds", "retired", "notes", "generations"],
-      [(QID[(cat, n)], qu, an, qi, ai, me, st, en, se, "", no, GEN.get((cat, n), ""))
+                    "clip_start", "clip_end", "seconds", "retired", "notes", "generations", "difficulty"],
+      [(QID[(cat, n)], qu, an, qi, ai, me, st, en, se, "", no, GEN.get((cat, n), ""), DIFF.get((cat, n), ""))
        for cat, n, qu, an, qi, ai, me, st, en, se, no in Q],
-      [10, 60, 34, 26, 26, 26, 9, 9, 8, 8, 18, 22, 12, 12, 14],
+      [10, 60, 34, 26, 26, 26, 9, 9, 8, 8, 18, 22, 10, 12, 12, 14],
       auto=[("(auto) in categories", '=IF($A{r}="","",COUNTIF(CategoryQuestions!$C:$C,$A{r}))'),
             ("(auto) times asked", '=IF($A{r}="","",COUNTIF(Usage!$E:$E,$A{r}))'),
             ("(auto) last asked", '=IF($A{r}="","",IF(COUNTIF(Usage!$E:$E,$A{r})=0,"",MAXIFS(Usage!$A:$A,Usage!$E:$E,$A{r})))')])
@@ -251,6 +260,8 @@ wb._sheets = [wb[n] for n in ["Settings", "Venues", "Categories", "Questions", "
 ws = wb["Categories"]
 dv = DataValidation(type="list", formula1='"standard,music,movie"')
 ws.add_data_validation(dv); dv.add("D2:D2000")
+dv = DataValidation(type="list", formula1='"easy,medium,hard"', allow_blank=True)
+wb["Questions"].add_data_validation(dv); dv.add("M2:M5000")
 for tab, col in (("Categories", "F"), ("Questions", "J")):  # retired
     dv = DataValidation(type="list", formula1='"Y"', allow_blank=True)
     wb[tab].add_data_validation(dv); dv.add(f"{col}2:{col}5000")

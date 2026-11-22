@@ -49,6 +49,8 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   chosen via List models). Settings keys ai_provider/ai_model/ai_effort/ai_web_search (hidden from the generic
   Settings form, edited in the AI card). API keys in tbtgen_config.json. Usage log ai_usage.jsonl (gitignored).
   Tested with stand-in providers (no real keys here) - real API calls not yet exercised.
+- Difficulty: Questions.difficulty (easy|medium|hard; build.DIFFS/parse_diff), rated by hand or by the same
+  AI tag call as generations ("Tag with AI"); set_mix includes a diff count; live sheet column M.
 - Generations: Questions.generations and Venues.audience (comma lists; build.GENS / parse_gens normalises
   aliases). App: set_mix (per-set counts), audience_fit (flag audience gens < 25% of tagged questions),
   question filter, editor ticks. AI: tag_generations (effort low, no web), category_ideas (no questions),

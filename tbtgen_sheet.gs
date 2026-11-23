@@ -244,28 +244,28 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-/** GET ?token=KEY&action=tables -> every tab's values (dates as yyyy-mm-dd). */
+/** GET is not used: the key must never be in a URL (URLs end up in logs and histories). Reads are POST 'tables'. */
 function doGet(e) {
-  try {
-    if (!keyOk_(e.parameter.token)) return json_({ ok: false, error: 'wrong or missing key' });
-    if (e.parameter.action !== 'tables') return json_({ ok: false, error: 'unknown action' });
-    const ss = SpreadsheetApp.getActive();
-    const tz = ss.getSpreadsheetTimeZone();
-    const tables = {};
-    ss.getSheets().forEach(sh => {
-      const rows = lastDataRow_(sh), cols = sh.getLastColumn();
-      tables[sh.getName()] = rows < 1 || cols < 1 ? [] :
-        sh.getRange(1, 1, rows, cols).getValues().map(r => r.map(v =>
-          v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : v));
-    });
-    return json_({ ok: true, tables: tables, url: ss.getUrl() });
-  } catch (err) {
-    return json_({ ok: false, error: String(err) });
-  }
+  return json_({ ok: false, error: 'unknown action: this TBTgen reads the sheet with POST (update TBTgen)' });
+}
+
+/** Every tab's values (dates as yyyy-mm-dd). */
+function tables_() {
+  const ss = SpreadsheetApp.getActive();
+  const tz = ss.getSpreadsheetTimeZone();
+  const tables = {};
+  ss.getSheets().forEach(sh => {
+    const rows = lastDataRow_(sh), cols = sh.getLastColumn();
+    tables[sh.getName()] = rows < 1 || cols < 1 ? [] :
+      sh.getRange(1, 1, rows, cols).getValues().map(r => r.map(v =>
+        v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : v));
+  });
+  return { ok: true, tables: tables, url: ss.getUrl() };
 }
 
 /**
  * POST {token, action, ...}. Actions:
+ *  - tables: every tab's values (read only; no lock)
  *  - append_usage: rows [[date, venue_id, set_id, category_id, question_id], ...]
  *  - upsert:  {tab, key:{col:value,...}|null, values:{col:value,...}}
  *             Updates the row whose key columns match; with no key on Questions/Categories, adds a new row and
@@ -292,6 +292,7 @@ function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
     if (!keyOk_(body.token)) return json_({ ok: false, error: 'wrong or missing key' });
+    if (body.action === 'tables') return json_(tables_());
     lock.waitLock(20000);
     if (body.action === 'append_usage') return json_(appendUsage_(body.rows || []));
     if (body.action === 'upsert') return json_(upsert_(body.tab, body.key, body.values || {}));

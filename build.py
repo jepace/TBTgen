@@ -126,12 +126,10 @@ class SheetError(Exception):
 
 def sheet_call(cfg, action, payload=None):
     """Talk to the TBTgen web app attached to the Google Sheet (see tbtgen_sheet.gs)."""
-    if payload is None:
-        url = cfg["sheet_url"] + "?" + urllib.parse.urlencode({"token": cfg["token"], "action": action})
-        req = urllib.request.Request(url)
-    else:
-        body = json.dumps({"token": cfg["token"], "action": action, **payload}).encode()
-        req = urllib.request.Request(cfg["sheet_url"], data=body, headers={"Content-Type": "application/json"})
+    # Always POST, so the key travels in the (encrypted) request body and never appears in a URL. Google answers
+    # with a redirect to a one-time result address that carries no key.
+    body = json.dumps({"token": cfg["token"], "action": action, **(payload or {})}).encode()
+    req = urllib.request.Request(cfg["sheet_url"], data=body, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:   # follows Google's redirect
             raw = resp.read().decode("utf-8")
@@ -143,7 +141,11 @@ def sheet_call(cfg, action, payload=None):
         hint = " (got a Google sign-in page: the web app's access must be 'Anyone')" if "<html" in raw[:200].lower() else ""
         raise SheetError("the Google Sheet web app did not return data" + hint)
     if not data.get("ok"):
-        raise SheetError(data.get("error", "unknown error from the Google Sheet web app"))
+        msg = data.get("error", "unknown error from the Google Sheet web app")
+        if action == "tables" and "unknown action" in msg:
+            msg += (" (the sheet's script is older than this TBTgen: paste in the new tbtgen_sheet.gs and use "
+                    "Deploy > Manage deployments > edit > Version: New version)")
+        raise SheetError(msg)
     return data
 
 

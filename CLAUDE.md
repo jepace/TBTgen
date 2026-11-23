@@ -75,5 +75,5 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   (keep in sync); AI prompts use plain (ai._p). Colours in build.MARK_COLORS. Importer does not capture formatting.
 - Security: app checks Host header (127.0.0.1/localhost:port, anti DNS-rebinding) + per-launch token; import scan
   passes folders after "--"; text starting with "=" is written as text (gs toCell_ prefixes ', XlsxWriter data_type s).
-  build.sheet_call still sends the key as a GET query param for "tables" (over HTTPS; could move to POST).
+  build.sheet_call always POSTs (key only in the body); reads are POST action "tables"; doGet refuses everything.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

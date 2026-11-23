@@ -21,7 +21,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 import build
 
@@ -128,7 +128,7 @@ class Canvas:
         width = self.px(w)
         out = []  # lines of [(text, font, fill)]
         for runs in build.markup_runs(text, base_b, base_i):
-            words, cur, gap = [], [], False   # words = [(space_before, [(piece, font, fill)])]
+            words, cur = [], []   # words = [[(piece, font, fill), ...]]
             for t, b, i, col in runs:
                 fill = build.MARK_COLORS[col] if col else color
                 for piece in re.findall(r"\s+|\S+", t):

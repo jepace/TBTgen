@@ -1,53 +1,22 @@
-# TBTgen: Trivia By Troy deck generator (prototype)
+# TBTgen: Trivia By Troy deck generator
 
-Builds a complete PowerPoint trivia deck for each venue-night from one spreadsheet.
+Builds a complete PowerPoint trivia deck for each venue-night from one question bank (a Google Sheet), plus
+an at-home video version, from a browser-based app or the command line.
 
-## Files
-- `trivia_bank.xlsx`: the question bank and schedule (edit this). Grey "(auto)" columns are formulas: don't type in them.
-  - **Categories**: `C0001`…: title, intro blurb, type `standard`/`music`/`movie`, season tag, retired
-  - **Questions**: `Q00001`…: question, answer, question image, optional answer image, media clip
-    (+ optional `clip_start`/`clip_end` in seconds, and `seconds` to override the 60-second timer), retired.
-    Shows how many categories use it, how often it was asked, and when it was last asked.
-  - **CategoryQuestions**: which question goes in which category, position 1–5. A question can be in any
-    number of categories, so reusing a question later = adding a row here.
-  - **Sets**: a night's game = 9 categories (round 1–3 × slot 1–3); mark exactly one `bonus` = Y
-  - **Venues**: name, logo, region, and `calendar_name` (how the venue is written in calendar event titles)
-  - **Schedule**: date, venue, set, host, calendar event. Nights without a set are skipped by the build.
-  - **Tiebreakers**, **Settings** (incl. `calendar_id`)
-  - **Usage**: which venue heard which question, in which category, when (filled in by `--record`)
-- IDs are permanent values, never formulas, so sorting rows is safe. Don't delete questions or categories;
-  mark them `retired` so their history stays.
-  - In Excel/Numbers: leave the ID blank on new rows and run `python3 build.py --ids` (every build also does it).
-  - In Google Sheets: install `tbtgen_sheet.gs` (Extensions → Apps Script) and IDs appear as you type.
-- `assets/`: logos, images, audio/video referenced from the sheet (paths are relative to `assets/`).
-  `assets/media/` (songs, movie clips) is not in Git: copy it from Google Drive (TBTgen/assets/media),
-  or run `python3 make_sample_media.py` to create placeholder clips for the sample bank.
-- `keynote_finish.applescript`: Mac only. Opens a generated .pptx in Keynote, fixes the auto-advance timing,
-  saves a .key file. (Not yet confirmed working.)
-- `tbtgen_sheet.gs`: Apps Script for the Google Sheet (Extensions → Apps Script). Adds a **TBTgen** menu:
-  - IDs appear automatically as you type new questions/categories.
-  - **Pull schedule from calendar…** reads a week from the Trivia By Troy Schedule calendar and adds a
-    Schedule row per night ("Venue - Host" → venue, host). Then pick a set for each night from the drop-down.
-- `build.py`: the generator
-
-## Where things live
-- Code: this repo (github.com/jepace/TBTgen, private)
-- The real question bank, media and images: Google Drive folder **TBTgen** ("Trivia Bank (new layout)" sheet)
-- The real schedule: the "Trivia By Troy Schedule" Google Calendar (not wired in yet)
-
-## Connect the generator to the Google Sheet (once)
-1. In the Trivia Bank sheet: Extensions → Apps Script, paste in `tbtgen_sheet.gs`, Save, reload the sheet.
-2. **TBTgen → Set up generator access…** shows a secret key and these steps:
-   in the Apps Script editor, **Deploy → New deployment → Web app**, Execute as **Me**,
-   Who has access **Anyone**, Deploy, copy the **Web app URL**.
-3. Next to `build.py`, create `tbtgen_config.json` (it's ignored by Git; don't commit it):
-   ```json
-   {"sheet_url": "https://script.google.com/macros/s/…/exec", "token": "the key from step 2"}
-   ```
-Now every run reads the sheet live, and `--record` writes the Usage log back to it.
-Without that file, `trivia_bank.xlsx` is used; `--bank some.xlsx` forces a file.
-If the script changes later: Deploy → Manage deployments → edit → Version: **New version** (same URL).
-To cut off access: **TBTgen → Make a new generator key**.
+## What a generated deck does
+- Venue slides (title, host, format, rules, upcoming nights, round/intermission, results, tip QR) carry the venue
+  logo (venues without one get the Trivia By Troy logo). Slide 2 is "Tonight's host" + the host's name.
+- 3 rounds × 3 categories × 5 questions, one category per night marked as the double-points bonus.
+- Question slides auto-advance after 60 s (or clip length + 30 s for music/movie). The Trivia By Troy logo starts
+  grey and fills with colour from the bottom over that time, as a countdown. Pictures appear immediately.
+- Music/movie clips play automatically on the question slide.
+- Answer rounds: each question re-appears; one click reveals the answer (+ answer note, answer picture; music replays).
+- Tiebreaker slides, and an answer key `.txt` next to each deck.
+- File names include the date, venue and host: `2026-11-23 101 Wine Press (James).pptx`.
+- Checks before building: warns if a venue already saw a category, or a question (even in a different category),
+  within `repeat_lookback_days`, or if venues in the same region on back-to-back nights share questions; stops on
+  retired or missing questions, a category without exactly positions 1–5, or a question used twice in one set.
+- Plays correctly in PowerPoint (Mac or Windows). Keynote's import does not auto-advance the timed slides.
 
 ## Mac setup (once)
 ```
@@ -55,47 +24,71 @@ brew install python ffmpeg
 python3 -m pip install --user --break-system-packages python-pptx openpyxl pillow lxml
 ```
 (`--break-system-packages` is Homebrew's way of making you confirm a per-user install; with `--user` it only
-affects your account. Prefer a virtual environment? `python3 -m venv .venv` and use `.venv/bin/python`.)
+affects your account.) For the optional AI assistant also install `anthropic` and/or `google-genai` the same way.
+
+## Connect to the Google Sheet (once)
+1. In the Trivia Bank sheet: Extensions → Apps Script, paste in `tbtgen_sheet.gs`, Save, reload the sheet.
+2. **TBTgen → Set up generator access…** shows a secret key and these steps:
+   in the Apps Script editor, **Deploy → New deployment → Web app**, Execute as **Me**,
+   Who has access **Anyone**, Deploy, copy the **Web app URL**.
+3. In the TBTgen folder (next to `build.py`), create `tbtgen_config.json` (ignored by Git; never commit it):
+   ```json
+   {"sheet_url": "https://script.google.com/macros/s/…/exec", "token": "the key from step 2"}
+   ```
+Now the app and `build.py` read the sheet live and save edits back to it. Without that file, `trivia_bank.xlsx`
+is used; `--bank some.xlsx` forces a file.
+- **After `tbtgen_sheet.gs` changes**, paste in the new version and use Deploy → Manage deployments → edit →
+  Version: **New version** (the URL stays the same). Until then the app's saves may be refused.
+- To cut off access: **TBTgen → Make a new generator key** (then update `tbtgen_config.json`).
+- The script also adds **TBTgen → Pull schedule from calendar…**: it reads a week from the Trivia By Troy Schedule
+  calendar and adds a Schedule row per night ("Venue - Host" → venue, host). Troy then picks each night's set.
 
 ## The app
-Double-click **TBTgen.command** (or run `python3 tbtgen_app.py`); your browser opens the app.
-- **Nights**: a week of the schedule. Filter weekdays, tick nights, **Check** or **Build** decks;
-  "Log as played" also writes the Usage tab. Nights with no set or an unknown venue can't be ticked.
-- **Sets**: each set's 9 categories by round, bonus, problems, when/where each category was last played,
-  which nights use it, and its video. **New set / Edit set**: a 3×3 grid of category pickers, bonus, tiebreakers,
-  with live warnings (played recently, not 5 questions, a question in two categories).
-- **Categories**: browse, **create and edit** categories and pick/reorder their 5 questions (search, or New question).
-- **Questions**: search the bank (text, answer, ID) or filter by category; click for pictures, clips and history;
-  **New question / Edit question**, including uploading pictures and clips into the assets folder.
-- On **Nights**, each night has a set drop-down: picking one saves it to the Schedule tab.
-- **Venues**: list, add and edit venues (name, calendar name, logo upload, night, region, upcoming nights, active).
-  New venues get an ID and calendar name suggested from the name; duplicate IDs/calendar names are refused.
-- **Settings**: edit the Settings tab with plain-English labels and range checks, or add a new setting.
-
-Everything you edit in the app is saved straight to the spreadsheet (the Google Sheet through its web app, or
-trivia_bank.xlsx). After updating `tbtgen_sheet.gs`, redeploy it (Deploy → Manage deployments → edit → Version:
-New version) or the app's saves will be refused. Uploaded pictures/clips go into this computer's `assets/` folder.
-- **Video**: make the at-home video for a set (seconds per question/answer, 720p/1080p, with or without
-  music/movie categories), watch it in the page, download it or open it in your player.
+Double-click **TBTgen.command** (or run `python3 tbtgen_app.py`); your browser opens the app. Leave the Terminal
+window open while using it; close it or click **Quit** to stop. The first time, macOS may refuse to open a
+downloaded .command file: right-click it → Open → Open.
+- **Nights**: a week of the schedule. Pick each night's set from its drop-down (saved to the Schedule tab), filter
+  weekdays, tick nights, **Check** or **Build** decks; "Log as played" also writes the Usage tab. Nights with no set
+  or an unknown venue can't be ticked. Each night shows the venue's audience and flags sets light on it.
+- **Sets**: each set's 9 categories by round, bonus, problems, age and difficulty mix, where/when each category was
+  last played, which nights use it, and its video. **New set / Edit set**: a 3×3 grid of category pickers, bonus,
+  tiebreakers, with live warnings (played recently, not 5 questions, a question in two categories).
+- **Categories**: browse, create and edit categories and pick/reorder their 5 questions (search, or New question).
+- **Questions**: search (text, answer, notes, ID) or filter by category, difficulty or generation; click for
+  pictures, clips and history; **New / Edit question** (with a live slide preview), uploading pictures and clips.
+- **Venues**: add and edit venues (name, calendar name, logo upload, night, region, upcoming nights, audience, active).
+- **Video**: make the at-home video for a set, watch it in the page, download it or open it.
 - **Files**: every deck, answer key and video, with View / Open / Download.
-- **Status**: setup checks, a spreadsheet connection test, counts, the fonts videos use, and the Settings tab.
-The first time, macOS may refuse to open a downloaded .command file: right-click it → Open → Open.
-Leave the Terminal window open while using the app; close it or click Quit to stop.
+- **Import**: read Troy's old decks into the bank (see below).
+- **Settings**: the Settings tab with plain-English labels and range checks, and the AI assistant setup.
+- **Status**: setup checks, a spreadsheet connection test, counts, the fonts videos use, AI spend.
 
-## Balancing for the crowd (generations)
-Questions have a **generations** tag (Boomer 1946–64, Gen X 1965–80, Millennial 1981–96, Gen Z 1997–2012,
-Gen Alpha 2013+) meaning "likely to know it". Tick them in the question editor or use **Tag ages with AI**.
-Questions also have a **difficulty** (easy / medium / hard, for a typical bar team: easy = most teams get it,
-hard = few do), set in the question editor or by **Tag with AI**, which rates difficulty and generations in one
-cheap request. The Questions tab filters by difficulty (or "Not rated yet"), categories show their spread, and each
-set's mix shows how many easy / medium / hard questions it has.
+Edits are saved straight to the spreadsheet. Uploaded pictures/clips go into this computer's `assets/` folder
+(copy them to the Drive folder so other computers have them). Data is cached until you click **Reload data**.
 
-Extra text on the slides: **question_note** is shown smaller under the question (a hint, "One point each!"),
-**answer_note** is revealed together with the answer (scoring note, fun fact). Both are optional and appear in the
-deck and the at-home video; the old-deck importer fills them from any extra text it finds. The **notes** column is
-for you only and never appears on a slide.
+## The spreadsheet
+Grey "(auto)" columns are formulas: don't type in them. IDs (`Q00001`, `C0001`) are permanent values, never
+formulas, so sorting rows is safe. Don't delete questions or categories; mark them `retired` so history stays.
+New rows get IDs automatically (Google Sheets: as you type; .xlsx: on every build, or `build.py --ids`).
 
-**Formatting** works in the question, answer, both notes and tiebreaker questions:
+| Tab | Columns |
+|---|---|
+| **Questions** | question, answer, question_image, answer_image, media, clip_start/clip_end (seconds), seconds (timer override), retired, notes (host only), generations, difficulty, question_note, answer_note |
+| **Categories** | title, blurb (intro slide), type `standard`/`music`/`movie`, season_tag, retired, notes |
+| **CategoryQuestions** | category_id, position 1–5, question_id. A question can be in any number of categories |
+| **Sets** | set_id, round 1–3, slot 1–3, category_id, bonus (exactly one `Y`) |
+| **Tiebreakers** | set_id, order, question, answer |
+| **Venues** | venue_id, name, logo, region, night, upcoming_nights, active, calendar_name (as written in calendar events), audience |
+| **Schedule** | date, venue_id, set_id, host, calendar_event. Nights without a set are skipped |
+| **Usage** | which venue heard which question, in which category, when (written by "Log as played" / `--record`) |
+| **Settings** | default_seconds, media_extra_seconds, repeat_lookback_days, calendar_id, AI settings, … |
+
+Picture and clip paths are relative to `assets/` (e.g. `images/turkey.jpg`, `media/song.mp3`).
+
+### Slide text: notes and formatting
+- **question_note** is shown smaller under the question (a hint, "One point each!"); **answer_note** is revealed
+  together with the answer (scoring note, fun fact). Both are optional; **notes** is for you only.
+- **Formatting** works in the question, answer, both notes and tiebreaker questions:
 
 | Type | Shows as |
 |---|---|
@@ -106,103 +99,81 @@ for you only and never appears on a slide.
 | `[gold]text[/gold]` | gold text (`[/]` also closes a colour) |
 
 A `*` only counts at the edge of a word, so M\*A\*S\*H and Q\*bert stay as typed; `\*` gives a literal star.
-The question editor shows a live slide preview. Answer keys, searching and the AI get the plain text.
-Venues have an **audience** (who usually plays there). Then:
-- each set shows an **Age mix** (how many of its questions each generation is likely to know), live in the set editor too;
-- the Nights tab shows each venue's audience and flags "⚠ light on Gen Z" when under a quarter of the set's
-  tagged questions suit part of that venue's audience;
-- the Questions tab can filter by generation (or "Not tagged yet");
+Answer keys, searching and the AI use the plain text.
+
+### Balancing for the crowd (generations and difficulty)
+Questions have a **generations** tag (Boomer 1946–64, Gen X 1965–80, Millennial 1981–96, Gen Z 1997–2012,
+Gen Alpha 2013+) meaning "likely to know it", and a **difficulty** (easy / medium / hard, for a typical bar team).
+Set them in the question editor or with **Tag with AI**. Venues have an **audience** (who usually plays there). Then:
+- each set shows an **age mix** and **difficulty mix**, live in the set editor too;
+- the Nights tab flags "⚠ light on Gen Z" when under a quarter of the set's tagged questions suit part of the
+  venue's audience;
 - Generate with AI and Category ideas can aim at chosen generations.
+
+## AI assistant (optional)
+Runs **only** when you click a button; it suggests, and nothing changes until you accept.
+- **Check with AI** (a question, a category, or a set): is the answer correct and the single best answer (what
+  else to accept), is the wording precise? Shows issues, a suggested rewrite, fun fact and sources;
+  **Use suggestion…** opens the editor pre-filled.
+- **Generate with AI…** (category editor): candidate questions in your style for a topic, plus a blurb.
+- **Category ideas with AI…** (Categories tab): titles, blurbs and angles to spark thinking; no questions.
+- **Tag with AI**: rates difficulty and generations. Cheap: low effort, no web search.
+- Providers: **Claude** (Anthropic; default claude-opus-5-5) or **Gemini** (Google; pick a model with List models),
+  set up on Settings → AI assistant. Keys are saved in `tbtgen_config.json` (not in Git or the sheet). Spend is
+  logged to `ai_usage.jsonl` and shown on Settings and Status. Claude requests use Anthropic's server-side
+  fallback: if the model declines a request, the API retries it on a fallback model.
+
+## At-home video
+`python3 build.py --video SET_ID` (or the Video tab) makes `out/video/SET_ID at-home.mp4`: title, how to play,
+3 rounds with the logo countdown on every question (default 30 s), the answers after each round, then a thanks
+card. Music and movie clips play on their questions (clip length + 10 s, or `video_media_extra_seconds`).
+Needs ffmpeg. Uses Trebuchet MS / Savoye LET / Brush Script when the computer has them (a Mac does).
+Song/movie clips and web photos may be copyrighted: fine for private use, risky to publish.
 
 ## Importing old decks
 `python3 import_decks.py FOLDER [--pictures] [--clips]` or the app's **Import** tab ("Choose folder…" on a Mac).
 Reads Keynote (.key, folder or single-file; Keynote 6+ fully, '09-era best effort) and PowerPoint (.pptx) decks
-directly, with no Keynote needed. It follows the Trivia By Troy pattern: "Questions 1 - 5" intros give the
-categories (title, blurb, music/movie/bonus), "Question N" slides the questions (+ picture/clip), and the answer
-slides (same question, answer added) the answers and answer pictures. Repeats across decks are merged, with every
-appearance (deck, date from the file name, venue if the path names one) kept.
-- Pictures and clips are optional; unticked, they're only counted (with total MB) so you can judge the space first.
-  TIFF / JPEG XL / HEIC pictures are converted to JPEG (on a Mac via `sips` if Pillow can't).
-- Output in `imports/<date-time>/`: `review.xlsx` (Decks, Categories, Questions, "Check these": missing answers,
-  odd-sized categories, slides that look like questions but weren't recognised) and the extracted media.
-- In the Import tab, tick categories (new ones are pre-ticked) and **Add to the bank**: new questions are appended,
-  existing ones reused, media copied into `assets/…/imported/`, and optionally play history (Usage) is recorded for
-  decks whose file names include a venue. Adding the same import again adds nothing new.
+directly, with no Keynote needed. "Questions 1 - 5" intros give the categories, "Question N" slides the questions
+(+ picture/clip and any extra text as question_note), answer slides the answers (+ answer_note, answer pictures).
+Repeats across decks are merged, with every appearance (deck, date from the file name, venue) kept.
+- Pictures and clips are optional; unticked, they're only counted (with total MB) so you can judge the space.
+- Output in `imports/<date-time>/`: `review.xlsx` (decks, categories, questions, "check these") and media.
+- In the Import tab, tick categories and **Add to the bank**: new questions are appended, existing ones reused,
+  media copied into `assets/…/imported/`, play history optionally recorded. Adding the same import twice adds nothing.
+- Text formatting (colours, italics) in old decks is not carried over.
 
-## AI assistant (optional)
-Runs **only** when you click **Check with AI** (on a question, in a category's editor, or on a set) or
-**Generate with AI…** (in a category's editor). It suggests; nothing changes until you accept.
-- **Check**: is the answer correct, is it the single best answer (what else should be accepted), is the wording
-  precise (dates for facts that change, vague superlatives)? Shows issues, a suggested rewrite, fun fact and
-  sources; **Use suggestion…** opens the question editor pre-filled.
-- **Generate**: a topic, how many, difficulty and notes → candidate questions in your style (it's shown examples
-  from your bank and the existing questions to avoid), plus a category blurb. Tick the ones to keep.
-- **Category ideas with AI…** (Categories tab): titles, blurbs and a one-line angle to spark thinking, for an
-  optional theme and audience; no questions are written. **Create category…** turns an idea into a new, empty category.
-- **Tag with AI** (category editor, or a set): rates each question's difficulty and which generations are likely
-  to know it; adjust, then **Save tags**. Cheap: low effort, no web search.
-- Providers: **Claude** (Anthropic; default model claude-opus-5-5) or **Gemini** (Google; pick a model with
-  List models). Set up on the Settings tab → AI assistant: provider, model, effort, web fact-checking, API keys.
-- Install the package for the provider you use:
-  `python3 -m pip install --user --break-system-packages anthropic` (and/or `google-genai`).
-- Keys are saved in `tbtgen_config.json` (not in Git or the spreadsheet). Spend is logged to `ai_usage.jsonl` and
-  shown on the Settings and Status tabs (Claude priced; Gemini shown as unpriced). Claude requests use Anthropic's
-  server-side fallback: if the model declines a request, the API retries it on a fallback model.
-
-## At-home video
-`python3 build.py --video SET_ID` (or the Video tab) makes `out/video/SET_ID at-home.mp4`: title, how to play,
-3 rounds with the logo countdown on every question (default 30 s), "Pencils down" and the answers after each
-round, then a thanks card. Music and movie clips play on their questions (clip length + 10 s, or the Settings
-tab's `video_media_extra_seconds`). Options: `--video-seconds`, `--video-answer-seconds`, `--video-height 1080`,
-`--video-no-media`. Needs ffmpeg. Text is drawn with Trebuchet MS / Savoye LET / Brush Script when the
-computer has them (a Mac does). Song/movie clips and web photos may be copyrighted: fine for private use,
-risky to publish.
-
-## Connect the generator to the Google Sheet (once)
-1. In the Trivia Bank sheet: Extensions → Apps Script, paste in `tbtgen_sheet.gs`, Save, reload the sheet.
-2. **TBTgen → Set up generator access…** shows a secret key and these steps:
-   in the Apps Script editor, **Deploy → New deployment → Web app**, Execute as **Me**,
-   Who has access **Anyone**, Deploy, copy the **Web app URL**.
-3. Next to `build.py`, create `tbtgen_config.json` (it's ignored by Git; don't commit it):
-   ```json
-   {"sheet_url": "https://script.google.com/macros/s/…/exec", "token": "the key from step 2"}
-   ```
-Now every run reads the sheet live, and `--record` writes the Usage log back to it.
-Without that file, `trivia_bank.xlsx` is used; `--bank some.xlsx` forces a file.
-If the script changes later: Deploy → Manage deployments → edit → Version: **New version** (same URL).
-To cut off access: **TBTgen → Make a new generator key**.
-
-## Mac setup (once)
+## Command line
 ```
-brew install python ffmpeg
-python3 -m pip install --user --break-system-packages python-pptx openpyxl pillow lxml
-```
-(`--break-system-packages` is Homebrew's way of making you confirm a per-user install; with `--user` it only
-affects your account. Prefer a virtual environment? `python3 -m venv .venv` and use `.venv/bin/python`.)
-
-## The app
-Double-click **TBTgen.command** (or run `python3 tbtgen_app.py`). Your browser opens a page showing a week
-of the schedule: pick the week and weekdays, tick nights, then **Check** or **Build**; "Log as played" also
-writes the Usage tab. Nights with no set or an unknown venue are shown but can't be ticked.
-The first time, macOS may refuse to open a downloaded .command file: right-click it → Open → Open.
-Leave the Terminal window open while using the app; close it or click Quit to stop.
-
-## Command line (needs Python 3 with python-pptx, openpyxl, Pillow, lxml; and ffmpeg)
-```
-python3 build.py                      # build every scheduled night that has a set -> out/
+python3 build.py                         # every scheduled night that has a set -> out/
 python3 build.py --week next --day wed   # just next week's Wednesday decks
-python3 build.py --date 2026-12-02    # one night;  --week this|next|DATE;  --day mon,tue;  --venue a,b
-python3 build.py --from 2026-11-23 --to 2026-11-29 --record
-python3 build.py --check              # only check for repeats/problems
+python3 build.py --date 2026-12-02       # one night;  --week this|next|DATE;  --day mon,tue;  --venue a,b
+python3 build.py --only 2026-12-02:wine_press,2026-12-02:pops
+python3 build.py --from 2026-11-23 --to 2026-11-29 --record   # also log to the Usage tab
+python3 build.py --check [--strict]      # only check for repeats/problems (--strict: warnings are errors)
+python3 build.py --video SET_ID          # at-home video (--video-seconds, --video-answer-seconds,
+                                         #   --video-height 1080, --video-no-media)
+python3 build.py --ids                   # .xlsx only: fill in missing IDs
 ```
 
-## What a generated deck does
-- Venue slides (title, format, rules, upcoming nights, round/intermission, results, tip QR) carry the venue logo.
-- Question slides auto-advance after 60 s (or clip length + 30 s for music/movie). The Trivia By Troy logo
-  starts grey and fills in with colour from the bottom over that time, as a countdown.
-- Music/movie clips play automatically on the question slide.
-- Answer rounds: each question re-appears; one click reveals the answer (+ answer image; music replays).
-- An answer key `.txt` is written next to each deck.
-- Checks: warns if a venue already saw a category, or a question (even in a different category), within
-  `repeat_lookback_days`; if venues in the same region on back-to-back nights share questions; and stops on
-  retired or missing questions, a category without exactly positions 1–5, or a question used twice in one set.
+## Files
+- `tbtgen_app.py` + `TBTgen.command`: the app. `build.py`: the deck generator. `video.py`: the at-home video.
+- `bank_write.py`: saving to the sheet/xlsx. `ai.py`: the AI assistant.
+- `import_decks.py` + `keynote_read.py`: the old-deck importer.
+- `tbtgen_sheet.gs`: the Google Sheet's Apps Script (menu, IDs, calendar pull, the web app the generator talks to).
+- `trivia_bank.xlsx`: a sample bank (`make_sample_bank.py` rebuilds it); `make_sample_media.py` makes placeholder clips.
+- `keynote_finish.applescript`: Mac only, untested attempt to fix Keynote's auto-advance after importing a .pptx.
+- `assets/`: logos and pictures. `assets/media/` (songs, clips) is not in Git: copy it from Google Drive.
+- Not in Git: `out/` (decks, videos), `build/` (cache), `imports/`, `tbtgen_config.json`, `ai_usage.jsonl`.
+
+## Where things live
+- Code: github.com/jepace/TBTgen (private)
+- The question bank: the **Trivia Bank** Google Sheet in the Drive folder **TBTgen** (media in TBTgen/assets)
+- The schedule: the "Trivia By Troy Schedule" Google Calendar, pulled into the sheet with the TBTgen menu
+
+## Security notes
+- The app only listens on this computer (127.0.0.1), checks every request carries the per-launch key, and refuses
+  requests addressed to any other host name, so web pages can't drive it.
+- `tbtgen_config.json` holds the sheet key and AI keys: keep it private (when the app saves keys it makes the
+  file readable only by you; if you made it by hand, `chmod 600 tbtgen_config.json`).
+- The sheet's web app accepts only requests with the key, and only writes the columns TBTgen edits. Text that
+  starts with `=` is stored as text, never as a formula.

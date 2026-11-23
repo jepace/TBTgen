@@ -331,6 +331,8 @@ function cellText_(v, tz) {
 function toCell_(col, v) {
   if (v === null || v === undefined) return '';
   if (col === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) return new Date(v + 'T12:00:00');
+  // Text that starts with "=" (e.g. from AI or an imported deck) must stay text, never become a formula.
+  if (typeof v === 'string' && v.charAt(0) === '=') return "'" + v;
   return v;
 }
 

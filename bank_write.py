@@ -134,6 +134,8 @@ class XlsxWriter:
                 c.number_format = "yyyy-mm-dd"
             else:
                 c.value = clean(v) if clean(v) != "" else None
+                if isinstance(c.value, str) and c.value.startswith("="):
+                    c.data_type = "s"  # text that starts with "=" stays text, never a formula
 
     def _save(self, wb):
         try:

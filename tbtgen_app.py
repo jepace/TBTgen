@@ -556,7 +556,18 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 left -= len(chunk)
 
+    def host_ok(self):
+        """Refuse requests whose Host isn't this app's own address. Stops a web page that points its own
+        domain name at 127.0.0.1 ("DNS rebinding") from loading the page, reading the token and using the API."""
+        port = self.server.server_address[1]
+        if self.headers.get("Host", "").lower() in (f"127.0.0.1:{port}", f"localhost:{port}"):
+            return True
+        self.send_json({"error": "forbidden"}, 403)
+        return False
+
     def do_GET(self):
+        if not self.host_ok():
+            return
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         if u.path == "/":
@@ -626,6 +637,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error": "not found"}, 404)
 
     def do_POST(self):
+        if not self.host_ok():
+            return
         if self.headers.get("X-TBTgen-Token") != TOKEN:
             return self.send_json({"error": "forbidden"}, 403)
         try:
@@ -700,11 +713,12 @@ class Handler(BaseHTTPRequestHandler):
             folders = [f for f in body.get("folders", []) if str(f).strip()]
             if not folders:
                 return self.send_json({"error": "give a folder to scan"}, 400)
-            args = [*folders]
+            args = []
             if body.get("pictures"):
                 args.append("--pictures")
             if body.get("clips"):
                 args.append("--clips")
+            args += ["--", *folders]  # a folder name starting with "-" stays a folder
             job = start_job("import", f"Reading decks in {', '.join(Path(f).name or f for f in folders)}", args,
                             script="import_decks.py")
             return self.send_json({"job": job} if job else {"error": "something is already running"}, 200 if job else 409)
@@ -738,8 +752,12 @@ class Handler(BaseHTTPRequestHandler):
                 set_id = str(body.get("set_id", ""))
                 if not set_id:
                     return self.send_json({"error": "pick a set"}, 400)
-                args = ["--video", set_id, "--video-seconds", str(int(body.get("seconds", 30))),
-                        "--video-answer-seconds", str(float(body.get("answer_seconds", 6))),
+                try:
+                    secs, ans_secs = int(body.get("seconds", 30)), float(body.get("answer_seconds", 6))
+                except (TypeError, ValueError):
+                    return self.send_json({"error": "seconds must be numbers"}, 400)
+                args = ["--video", set_id, "--video-seconds", str(secs),
+                        "--video-answer-seconds", str(ans_secs),
                         "--video-height", "1080" if str(body.get("height")) == "1080" else "720"]
                 if not body.get("media", True):
                     args.append("--video-no-media")

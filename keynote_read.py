@@ -11,6 +11,7 @@ to get slide order, the text on each slide, and the pictures/clips placed on it.
 import gzip
 import io
 import os
+import posixpath
 import re
 import zipfile
 import xml.etree.ElementTree as ET
@@ -315,38 +316,77 @@ def read_key(path):
 
 
 def read_pptx(path):
-    from pptx import Presentation
-    from pptx.oxml.ns import qn
+    """Reads a .pptx in place: only the slide XML is read. Pictures and clips are listed with their size from the
+    zip directory and read only if they're imported (python-pptx would load every video into memory)."""
+    from lxml import etree
+    ns = {"p": "http://schemas.openxmlformats.org/presentationml/2006/main",
+          "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+          "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
+    rel_ns = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+    r_embed, r_link = f"{{{ns['r']}}}embed", f"{{{ns['r']}}}link"
+    z = zipfile.ZipFile(path)
+    names = set(z.namelist())
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=False)
 
-    prs = Presentation(str(path))
+    def xml(name):
+        return etree.fromstring(z.read(name), parser)
+
+    def rels(part):
+        d, base = posixpath.split(part)
+        rp = posixpath.join(d, "_rels", base + ".rels")
+        out = {}
+        if rp in names:
+            for r in xml(rp).iter(rel_ns + "Relationship"):
+                if r.get("TargetMode") == "External":
+                    continue
+                out[r.get("Id")] = posixpath.normpath(posixpath.join(d, r.get("Target", "")))
+        return out
+
+    def ref(part, prefix):
+        info = z.getinfo(part)
+        ext = posixpath.splitext(part)[1].lower()
+        # named by the checksum stored in the zip directory: same picture -> same name, without reading it
+        return MediaRef(f"{prefix}-{info.CRC:08x}-{info.file_size}{ext}", info.file_size, (lambda nm=part: z.read(nm)))
+
+    pres = "ppt/presentation.xml"
+    prels = rels(pres)
+    order = [prels.get(x.get(r_embed) or x.get(f"{{{ns['r']}}}id"))
+             for x in xml(pres).iterfind("p:sldIdLst/p:sldId", ns)]
     slides = []
-    for number, sl in enumerate(prs.slides, 1):
+    for number, part in enumerate([o for o in order if o in names], 1):
         s = Slide(number)
-        shapes = sorted(sl.shapes, key=lambda sh: ((sh.top or 0), (sh.left or 0)))
-        for sh in shapes:
-            if sh.has_text_frame:
-                t = sh.text_frame.text.strip()
-                if t:
-                    s.texts.append(t)
-            el = sh._element
-            # media (video/audio) are pictures with a media relationship
+        srels = rels(part)
+        tree = xml(part).find("p:cSld/p:spTree", ns)
+        shapes = [el for el in tree if etree.QName(el).localname in ("sp", "pic", "graphicFrame", "grpSp")]
+
+        def pos(el):
+            off = el.find(".//a:off", ns)
+            return (int(off.get("y", 0)), int(off.get("x", 0))) if off is not None else (0, 0)
+        for el in sorted(shapes, key=pos):
+            tag = etree.QName(el).localname
+            if tag == "sp":
+                body = el.find("p:txBody", ns)
+                if body is not None:
+                    paras = ["".join("\v" if etree.QName(n).localname == "br" else (n.text or "")
+                                     for n in p.iter(f"{{{ns['a']}}}t", f"{{{ns['a']}}}br"))
+                             for p in body.iterfind("a:p", ns)]
+                    t = "\n".join(paras).strip()
+                    if t:
+                        s.texts.append(t)
             media_rid = None
             for node in el.iter():
-                if str(node.tag).rsplit("}", 1)[-1] in ("media", "videoFile", "audioFile"):
-                    media_rid = node.get(qn("r:embed")) or node.get(qn("r:link"))
+                if isinstance(node.tag, str) and etree.QName(node).localname in ("media", "videoFile", "audioFile"):
+                    media_rid = node.get(r_embed) or node.get(r_link)
                     if media_rid:
                         break
-            if media_rid and media_rid in sl.part.rels:
-                part = sl.part.rels[media_rid].target_part
-                name = Path(str(part.partname)).name
-                s.media.append(MediaRef(name, len(part.blob), (lambda p=part: p.blob)))
+            if media_rid and srels.get(media_rid) in names:
+                s.media.append(ref(srels[media_rid], "media"))
                 continue
-            if sh.shape_type == 13 or el.tag == qn("p:pic"):  # picture
-                try:
-                    img = sh.image
-                except Exception:
-                    continue
-                s.images.append(MediaRef(f"image-{img.sha1[:10]}.{img.ext}", len(img.blob), (lambda b=img.blob: b)))
+            if tag == "pic":
+                blip = el.find(".//a:blip", ns)
+                target = srels.get(blip.get(r_embed)) if blip is not None else None
+                if target in names:
+                    s.images.append(ref(target, "image"))
         slides.append(s)
     return slides
 

@@ -62,6 +62,9 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   new "append" action (gs + bank_write) and remembers applied keys in applied.json. Tested on Troy's (trimmed)
   sample .key, a single-file .key built from it, and a generated .pptx (all 45 questions recovered). Keynote '09
   (index.apxl) path is untested.
+  Decks are read in place, never copied: .key reads only Index/*.iwa (media sizes from the listing, bytes only when
+  importing); .pptx is read with zipfile+lxml (not python-pptx, which loaded every video into RAM), pictures/clips
+  named by zip CRC+size. 405 MB test deck: 22 MB peak memory.
 - Video style parity idea (not done): one shared layout spec used by both the pptx builder and video.py. Data cached until
   "Reload data". `build.check_sets()` = per-set checks without a schedule.
 - Future idea (not started): an AI voice host (TTS, possibly a licensed

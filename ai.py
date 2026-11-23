@@ -320,6 +320,10 @@ def check_questions(bank, qids, context=""):
     lines = [f"Category: {context}" if context else "", "Check these trivia questions:", ""]
     for qid, q in qs:
         lines += [f"ID: {qid}", f"Question: {_s(q['question'])}", f"Answer: {_s(q['answer'])}"]
+        if _s(q.get("question_note")):
+            lines.append(f"Shown under the question: {_s(q['question_note'])}")
+        if _s(q.get("answer_note")):
+            lines.append(f"Shown with the answer: {_s(q['answer_note'])}")
         if _s(q.get("media")):
             lines.append("(This question plays a song or movie clip.)")
         lines.append("")

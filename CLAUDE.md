@@ -67,4 +67,7 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - Future idea (not started): an AI voice host (TTS, possibly a licensed
   clone of Troy's voice; Claude-drafted banter with a sheet column to override; pronunciation column).
   Big caveat discussed with the user: publishing song/movie clips and web photos raises copyright issues.
+- Slide notes: Questions.question_note (smaller italic under the question, on question + answer slides) and
+  answer_note (italic, revealed in the same click as the answer). Live sheet columns N/O; `notes` stays host-only.
+  Importer fills them from extra slide text (NOTE_SKIP filters structural labels).
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

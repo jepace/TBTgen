@@ -89,6 +89,11 @@ Questions also have a **difficulty** (easy / medium / hard, for a typical bar te
 hard = few do), set in the question editor or by **Tag with AI**, which rates difficulty and generations in one
 cheap request. The Questions tab filters by difficulty (or "Not rated yet"), categories show their spread, and each
 set's mix shows how many easy / medium / hard questions it has.
+
+Extra text on the slides: **question_note** is shown smaller under the question (a hint, "One point each!"),
+**answer_note** is revealed together with the answer (scoring note, fun fact). Both are optional and appear in the
+deck and the at-home video; the old-deck importer fills them from any extra text it finds. The **notes** column is
+for you only and never appears on a slide.
 Venues have an **audience** (who usually plays there). Then:
 - each set shows an **Age mix** (how many of its questions each generation is likely to know), live in the set editor too;
 - the Nights tab shows each venue's audience and flags "⚠ light on Gen Z" when under a quarter of the set's

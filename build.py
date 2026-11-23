@@ -492,14 +492,22 @@ def fit_box(path, x, y, w, h):
     return Emu(x + (w - pw) // 2), Emu(y + (h - ph) // 2), Emu(pw), Emu(ph)
 
 
-def question_block(slide, num, question):
-    """'Question N' + question text; returns the y (EMU) where the content area can start."""
+def question_block(slide, num, question, note=""):
+    """'Question N' + question text (+ an optional smaller note under it); returns the y (EMU) where the
+    content area can start."""
     import math
     text(slide, Inches(0.35), Inches(0.2), Inches(11), Inches(0.7), f"Question {num}", size=28)
     lines = sum(max(1, math.ceil(len(par) / 95)) for par in str(question).split("\n"))
     h = Inches(0.36) * lines + Inches(0.1)
     text(slide, Inches(0.35), Inches(0.85), Inches(11.3), h, question, size=20, bold=True)
-    return max(Inches(2.25), Inches(0.85) + h + Inches(0.15))
+    bottom = Inches(0.85) + h
+    note = str(note or "").strip()
+    if note:
+        nlines = sum(max(1, math.ceil(len(par) / 115)) for par in note.split("\n"))
+        nh = Inches(0.3) * nlines + Inches(0.05)
+        text(slide, Inches(0.35), bottom, Inches(11.3), nh, note, size=16, italic=True)
+        bottom += nh
+    return max(Inches(2.25), bottom + Inches(0.15))
 
 
 def header(slide, title, logo, size=28):
@@ -717,7 +725,7 @@ def slide_question(deck, cat, qq, num, settings):
     s = deck.slide()
     t = Timing()
     kind = cat["type"]
-    top = question_block(s, num, qq["question"])
+    top = question_block(s, num, qq["question"], qq.get("question_note", ""))
     seconds = float(qq["seconds"] or settings.get("default_seconds", 60))
     box = (Inches(2.4), top, Inches(8.5), Inches(7.2) - top)
     if qq["media"]:
@@ -740,7 +748,7 @@ def slide_answer(deck, cat, qq, num):
     s = deck.slide()
     t = Timing()
     kind = cat["type"]
-    top = question_block(s, num, qq["question"])
+    top = question_block(s, num, qq["question"], qq.get("question_note", ""))
     picture(s, ASSETS / "brand/tbt_logo.png", *LOGO_BOX)
     right = (Inches(5.6), top, Inches(7.4), Inches(7.2) - top)
     reveal = []
@@ -749,7 +757,18 @@ def slide_answer(deck, cat, qq, num):
     ans = text(s, Inches(0.5), top + Inches(0.15), Inches(4.9), Inches(1.4), qq["answer"], size=26, bold=True, color=GOLD)
     t.text_ids.add(ans.shape_id)
     reveal.append(("appear", ans.shape_id))
-    left_img = (Inches(0.5), top + Inches(1.6), Inches(4.9), Inches(7.2) - top - Inches(1.6))
+    img_top = top + Inches(1.6)
+    anote = str(qq.get("answer_note", "") or "").strip()
+    if anote:  # extra text revealed with the answer (scoring note, fun fact, ...)
+        import math
+        alines = sum(max(1, math.ceil(len(par) / 22)) for par in str(qq["answer"]).split("\n"))
+        ny = top + Inches(0.3) + Inches(0.45) * alines
+        nh = Inches(0.3) * sum(max(1, math.ceil(len(par) / 40)) for par in anote.split("\n")) + Inches(0.1)
+        nt = text(s, Inches(0.5), ny, Inches(4.9), nh, anote, size=16, italic=True)
+        t.text_ids.add(nt.shape_id)
+        reveal.append(("appear", nt.shape_id))
+        img_top = max(img_top, ny + nh + Inches(0.15))
+    left_img = (Inches(0.5), img_top, Inches(4.9), Inches(7.2) - img_top)
     if qq["media"] and (kind == "music" or Path(qq["media"]).suffix.lower() in (".mp3", ".m4a", ".wav", ".aac")):
         _, _, av, art, clip = q_media(qq, kind)
         vid = s.shapes.add_movie(str(av), *fit_box(art, *right), poster_frame_image=str(art), mime_type="video/mp4")

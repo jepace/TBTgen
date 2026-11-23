@@ -230,6 +230,7 @@ def api_questions(q, cat, limit=300, gen="", diff=""):
                     "question_image": str(qq.get("question_image") or ""), "answer_image": str(qq.get("answer_image") or ""),
                     "media": str(qq.get("media") or ""), "retired": build.is_yes(qq.get("retired")),
                     "notes": str(qq.get("notes") or ""), "clip_start": str(qq.get("clip_start") or ""),
+                    "question_note": str(qq.get("question_note") or ""), "answer_note": str(qq.get("answer_note") or ""),
                     "clip_end": str(qq.get("clip_end") or ""), "seconds": str(qq.get("seconds") or ""),
                     "generations": qgens, "difficulty": qdiff if qdiff in build.DIFFS else "",
                     "categories": [{"id": c, "title": bank["cats"].get(c, {}).get("title", c)} for c in cats_of.get(qid, [])],
@@ -1145,7 +1146,8 @@ async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$
       ${x.question_image?`<div><div class="small muted">Question picture</div><img src="${assetUrl(x.question_image)}" alt=""></div>`:""}
       ${x.answer_image?`<div><div class="small muted">Answer picture</div><img src="${assetUrl(x.answer_image)}" alt=""></div>`:""}
       ${x.media?`<div><div class="small muted">Clip: ${esc(x.media)}</div>${/\.(mp3|m4a|wav|aac)$/i.test(x.media)?`<audio controls preload="none" src="${assetUrl(x.media)}"></audio>`:`<video controls preload="none" style="max-width:320px" src="${assetUrl(x.media)}"></video>`}</div>`:""}
-      <div style="flex:1;min-width:220px"><div style="white-space:pre-wrap">${esc(x.question)}</div><div style="margin-top:6px">Answer: <strong>${esc(x.answer)}</strong></div>
+      <div style="flex:1;min-width:220px"><div style="white-space:pre-wrap">${esc(x.question)}</div>${x.question_note?`<div class="small"><i>${esc(x.question_note)}</i></div>`:""}
+      <div style="margin-top:6px">Answer: <strong>${esc(x.answer)}</strong>${x.answer_note?` <span class="small"><i>${esc(x.answer_note)}</i></span>`:""}</div>
       ${x.notes?`<div class="small muted">Notes: ${esc(x.notes)}</div>`:""}
       <div class="small" style="margin-top:6px">In: ${x.categories.map(c=>`${esc(c.title)} <span class="muted mono">${esc(c.id)}</span>`).join(", ")||"no category"}</div>
       <div class="small muted" style="margin-top:4px">${x.history.length?"Asked: "+x.history.map(h=>`${fmtDate(h.date)} ${esc(h.venue)}`).join(" · "):"Never asked yet"}</div>
@@ -1264,20 +1266,25 @@ async function editQuestion(q,after,which){q=q||{};const isNew=!q.id;
   const d=dialog(which||1,isNew?"New question":`Edit ${q.id}`,`<div class="f">
     <label>Question</label><div><textarea data-f="question">${esc(q.question)}</textarea></div>
     <label>Answer</label><div><input type="text" data-f="answer" value="${esc(q.answer)}"></div>
+    <label>Note under question</label><div><input type="text" data-f="question_note" value="${esc(q.question_note)}" placeholder="optional, e.g. One point each!">
+      <div class="hint">Extra text on the question slide, shown smaller under the question</div></div>
+    <label>Note with answer</label><div><input type="text" data-f="answer_note" value="${esc(q.answer_note)}" placeholder="optional, e.g. One point for title · one for artist">
+      <div class="hint">Extra text revealed together with the answer (scoring note, fun fact…)</div></div>
     <label>Question picture</label><div data-asset="qimg"></div>
     <label>Answer picture</label><div data-asset="aimg"><div class="hint">optional: shown when the answer is revealed</div></div>
     <label>Song / movie clip</label><div><div data-asset="media"></div><div class="hint">for Music and Movie categories</div></div>
     <label>Clip start / end</label><div class="pickrow"><input type="text" data-f="clip_start" value="${esc(q.clip_start)}" placeholder="start (s)" style="max-width:110px">
       <input type="text" data-f="clip_end" value="${esc(q.clip_end)}" placeholder="end (s)" style="max-width:110px"><span class="hint">seconds into the clip; blank = whole clip</span></div>
     <label>Seconds on screen</label><div><input type="text" data-f="seconds" value="${esc(q.seconds)}" placeholder="blank = default (60)" style="max-width:180px"></div>
-    <label>Notes</label><div><input type="text" data-f="notes" value="${esc(q.notes)}"></div>
+    <label>Host notes</label><div><input type="text" data-f="notes" value="${esc(q.notes)}"><div class="hint">For you only: never shown on a slide</div></div>
     <label>Difficulty</label><div><select data-f="difficulty" style="max-width:200px"><option value="">not rated</option>${DIFFS.map(d=>`<option${d===q.difficulty?" selected":""}>${d}</option>`).join("")}</select>
       <div class="hint">For a typical bar team: easy = most teams get it, hard = few do</div></div>
     <label>Who'll know it</label><div>${gpick("qg",q.generations)}<div class="hint">Generations likely to know the answer: used to balance sets for each venue's crowd</div></div>
     <label>Retired</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="retired" ${q.retired?"checked":""}> don't use this question any more</label></div>
     ${isNew?"":`<label>Used in</label><div class="small" style="padding-top:7px">${(q.categories||[]).map(c=>esc(c.title)).join(", ")||"no category yet"}</div>`}</div>`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Add question":"Save","primary",async dd=>{
-      const v={question:val(dd,'[data-f=question]'),answer:val(dd,'[data-f=answer]'),question_image:getQ(),answer_image:getA(),media:getM(),
+      const v={question:val(dd,'[data-f=question]'),answer:val(dd,'[data-f=answer]'),question_note:val(dd,'[data-f=question_note]'),
+        answer_note:val(dd,'[data-f=answer_note]'),question_image:getQ(),answer_image:getA(),media:getM(),
         clip_start:val(dd,'[data-f=clip_start]'),clip_end:val(dd,'[data-f=clip_end]'),seconds:val(dd,'[data-f=seconds]'),
         notes:val(dd,'[data-f=notes]'),retired:dd.querySelector('[data-f=retired]').checked?"Y":"",generations:gread(dd,"qg").join(", "),difficulty:dd.querySelector('[data-f=difficulty]').value};
       if(!v.question||!v.answer){toast("A question needs both the question and the answer",true);return}
@@ -1622,7 +1629,7 @@ function renderImportCats(){const r=S.imData;if(!r)return;const qs=r.questions,q
         <td><strong>${esc(c.title)}</strong>${c.type!=="standard"?` <span class="tag">${esc(c.type)}</span>`:""} ${st}
           <div class="small muted">${esc(c.blurb).slice(0,120)}</div>
           <details><summary class="small">${c.questions.length} question${c.questions.length==1?"":"s"}</summary>${c.questions.map(k=>{const x=qs[k];
-            return `<div class="row small" style="margin:4px 0;align-items:flex-start">${img(x.question_image)}${img(x.answer_image)}<div style="flex:1">${esc(x.question)}<br><strong>${esc(x.answer||"(no answer found)")}</strong>
+            return `<div class="row small" style="margin:4px 0;align-items:flex-start">${img(x.question_image)}${img(x.answer_image)}<div style="flex:1">${esc(x.question)}${x.question_note?` <i class="muted">${esc(x.question_note)}</i>`:""}<br><strong>${esc(x.answer||"(no answer found)")}</strong>${x.answer_note?` <i class="muted">${esc(x.answer_note)}</i>`:""}
               ${x.media?' <span class="tag">♪/▶ clip</span>':x.media_names&&x.media_names.length&&!r.media.clips.imported?' <span class="tag">clip not imported</span>':""}${x.in_bank?` <span class="tag">${esc(x.in_bank)}</span>`:""}</div></div>`}).join("")}</details></td>
         <td class="small hide-sm">used ${c.appearances.length}× <div class="muted">${esc(dates[0])}${dates.length>1?` – ${esc(dates[dates.length-1])}`:""}</div></td></tr>`}).join("")||'<tr><td class="empty">Nothing matches.</td></tr>'}</tbody></table>
     <div class="row" style="margin-top:12px"><button class="primary" id="imAdd"></button>

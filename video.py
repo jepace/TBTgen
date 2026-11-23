@@ -192,15 +192,17 @@ def slide_category(c, cat, first_q, nq, bonus):
     c.text(0.5, 6.75, 6, "Good Luck!", "bolditalic", 20)
 
 
-def question_top(c, num, question):
+def question_top(c, num, question, note=""):
     c.text(0.35, 0.2, 11, f"Question {num}", "body", 28)
     bottom = c.text(0.35, 0.85, 11.3, question, "bold", 20)
+    if str(note or "").strip():
+        bottom = c.text(0.35, bottom + 0.02, 11.3, str(note).strip(), "bolditalic", 16)
     return max(2.25, bottom + 0.15)
 
 
 def slide_question(c, qq, num, kind, logo_static=False):
     """Returns the media box (inches) for a movie, else None. The countdown logo is added by ffmpeg."""
-    top = question_top(c, num, qq["question"])
+    top = question_top(c, num, qq["question"], qq.get("question_note", ""))
     box = (2.4, top, 8.5, 7.2 - top)
     if logo_static:
         c.logo()
@@ -216,7 +218,7 @@ def slide_question(c, qq, num, kind, logo_static=False):
 
 
 def slide_answer(c, qq, num, kind, revealed):
-    top = question_top(c, num, qq["question"])
+    top = question_top(c, num, qq["question"], qq.get("question_note", ""))
     c.logo()
     right = (5.6, top, 7.4, 7.2 - top)
     if qq["question_image"] and not qq["media"]:
@@ -225,9 +227,13 @@ def slide_answer(c, qq, num, kind, revealed):
         c.picture(build.music_frame(), *right)
     if not revealed:
         return
-    c.text(0.5, top + 0.15, 4.9, qq["answer"], "bold", 26, GOLD)
+    below = c.text(0.5, top + 0.15, 4.9, qq["answer"], "bold", 26, GOLD)
+    img_top = top + 1.6
+    if str(qq.get("answer_note", "") or "").strip():
+        below = c.text(0.5, below + 0.1, 4.9, str(qq["answer_note"]).strip(), "bolditalic", 16)
+        img_top = max(img_top, below + 0.2)
     if qq["answer_image"]:
-        img_box = (0.5, top + 1.6, 4.9, 7.2 - top - 1.6) if (qq["question_image"] and not qq["media"]) else right
+        img_box = (0.5, img_top, 4.9, 7.2 - img_top) if (qq["question_image"] and not qq["media"]) else right
         if img_box == right:  # cover the question picture
             c.d.rectangle([c.px(right[0]), c.px(right[1]), c.px(right[0] + right[2]), c.px(right[1] + right[3])],
                           fill="black")

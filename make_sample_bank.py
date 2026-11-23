@@ -209,11 +209,20 @@ EASY = {("turkey", 1), ("turkey", 2), ("tg_potluck", 2), ("tg_potluck", 4), ("tg
 DIFF = {k: "hard" if k in HARD else "easy" if k in EASY else "medium" for k in [(c, n) for c, n, *_ in Q]}
 DIFF[("holiday_travel", 5)] = ""  # one left unrated on purpose
 
+# Extra text shown on the slides (question_note under the question; answer_note revealed with the answer)
+QNOTE = {("music_tg", n): "One point for the title, one for the artist" for n in range(1, 6)}
+QNOTE[("nov_bdays", 3)] = "Hint: he wrote Tom Sawyer"
+ANOTE = {("music_tg", n): "One Point for Title · One Point for Artist" for n in range(1, 6)}
+ANOTE[("turkey", 5)] = "Minnesota raises around 40 million turkeys a year"
+ANOTE[("tg_potluck", 1)] = "Wisconsin grows more than half of the country's cranberries"
+
 sheet("Questions", ["question_id", "question", "answer", "question_image", "answer_image", "media",
-                    "clip_start", "clip_end", "seconds", "retired", "notes", "generations", "difficulty"],
-      [(QID[(cat, n)], qu, an, qi, ai, me, st, en, se, "", no, GEN.get((cat, n), ""), DIFF.get((cat, n), ""))
+                    "clip_start", "clip_end", "seconds", "retired", "notes", "generations", "difficulty",
+                    "question_note", "answer_note"],
+      [(QID[(cat, n)], qu.replace("  One Point Each!", "") if cat == "music_tg" else qu, an, qi, ai, me, st, en, se, "",
+        no, GEN.get((cat, n), ""), DIFF.get((cat, n), ""), QNOTE.get((cat, n), ""), ANOTE.get((cat, n), ""))
        for cat, n, qu, an, qi, ai, me, st, en, se, no in Q],
-      [10, 60, 34, 26, 26, 26, 9, 9, 8, 8, 18, 22, 10, 12, 12, 14],
+      [10, 60, 34, 26, 26, 26, 9, 9, 8, 8, 18, 22, 10, 30, 30, 12, 12, 14],
       auto=[("(auto) in categories", '=IF($A{r}="","",COUNTIF(CategoryQuestions!$C:$C,$A{r}))'),
             ("(auto) times asked", '=IF($A{r}="","",COUNTIF(Usage!$E:$E,$A{r}))'),
             ("(auto) last asked", '=IF($A{r}="","",IF(COUNTIF(Usage!$E:$E,$A{r})=0,"",MAXIFS(Usage!$A:$A,Usage!$E:$E,$A{r})))')])

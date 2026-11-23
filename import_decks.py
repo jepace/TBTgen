@@ -39,7 +39,9 @@ RE_INTRO = re.compile(r"^questions?\s*#?\s*(\d+)\s*(?:-|–|—|to|thru|through)
 RE_QUESTION = re.compile(r"^question\s*#?\s*(\d+)$", re.I)
 RE_ROUND = re.compile(r"^(?:round\s+(one|two|three|four|five|[1-5])|(final)\s+round)$", re.I)
 LABELS = re.compile(r"^(good luck!?|tonight.?s\s+bonus\s+category|bonus\s+category|double points!?|trivia night|"
-                    r"one point (each|for (title|artist)).*|answers?|exchange your answer sheets.*)$", re.I | re.S)
+                    r"one points? (each|awarded|for (the )?(title|artist|song|each)).*|answers?|exchange your answer sheets.*)$", re.I | re.S)
+NOTE_SKIP = re.compile(r"^(good luck!?|tonight.?s\s+bonus\s+category|bonus\s+category|double points!?|trivia night|"
+                       r"answers?|exchange your answer sheets.*|trivia by troy)$", re.I | re.S)
 STRUCTURE = re.compile(r"(end of round|intermission|results|standings|trivia (rules|format|night seasons)|tiebreaker|"
                        r"upcoming trivia|tip your host|having fun|how did we do|thanks for playing|season \d+|"
                        r"round (one|two|three|four)|good luck|hang in there|comes down to this)", re.I)
@@ -144,7 +146,9 @@ def parse_deck(path, venues=()):
             if prev is None:
                 counts["question"] += 1
                 question = max(body, key=len, default="")
+                extra_q = [t for t in rest if t != question and not NOTE_SKIP.match(t.replace("\n", " ").strip())]
                 q = {"number": num, "round": key[0], "slide": s.number, "question": question, "answer": "",
+                     "question_note": "\n".join(extra_q), "answer_note": "",
                      "question_image": imgs[0] if imgs else None, "answer_image": None,
                      "media": s.media[0] if s.media else None}
                 qmap[key] = q
@@ -161,6 +165,12 @@ def parse_deck(path, venues=()):
                 if extra:
                     prev["answer"] = min(extra, key=len) if len(extra) > 1 and all(len(e) < 80 for e in extra) else extra[0]
                     prev["answer_slide"] = s.number
+                # any other text on the answer slide (scoring notes, fun facts) that wasn't on the question slide
+                qtexts = [prev["question"], prev.get("question_note", "")]
+                others = [t for t in rest if t != prev["answer"] and not any(similar(t, x) for x in qtexts if x)
+                          and not NOTE_SKIP.match(t.replace("\n", " ").strip())]
+                if others:
+                    prev["answer_note"] = "\n".join(others)
                 qnames = {prev["question_image"].name} if prev["question_image"] else set()
                 new_imgs = [i for i in imgs if i.name not in qnames]
                 if new_imgs:
@@ -307,7 +317,9 @@ def main():
                 k = qkey(q["question"], q["answer"])
                 rec = questions.get(k)
                 if rec is None:
-                    rec = questions[k] = {"key": k, "question": q["question"], "answer": q["answer"], "question_image": "",
+                    rec = questions[k] = {"key": k, "question": q["question"], "answer": q["answer"],
+                                          "question_note": q.get("question_note", ""), "answer_note": q.get("answer_note", ""),
+                                          "question_image": "",
                                           "answer_image": "", "media": "", "media_names": [], "appearances": [],
                                           "existing_id": existing_q.get(k, "")}
                 rec["appearances"].append(appearance)
@@ -401,12 +413,13 @@ def write_review(r, path):
     for c in r["categories"]:
         for k in c["questions"]:
             cat_of[k].append(c["title"])
-    tab("Questions", ["key", "question", "answer", "categories", "times used", "first used", "last used", "in bank as",
-                      "picture", "answer picture", "clip"],
-        [[x["key"], x["question"], x["answer"], ", ".join(dict.fromkeys(cat_of[x["key"]])), len(x["appearances"]),
+    tab("Questions", ["key", "question", "answer", "question note", "answer note", "categories", "times used",
+                      "first used", "last used", "in bank as", "picture", "answer picture", "clip"],
+        [[x["key"], x["question"], x["answer"], x.get("question_note", ""), x.get("answer_note", ""),
+          ", ".join(dict.fromkeys(cat_of[x["key"]])), len(x["appearances"]),
           min(a["date"] for a in x["appearances"]), max(a["date"] for a in x["appearances"]), x["existing_id"],
           x["question_image"], x["answer_image"], x["media"]] for x in q.values()],
-        [14, 60, 30, 30, 10, 12, 12, 12, 24, 24, 24])
+        [14, 60, 30, 30, 30, 30, 10, 12, 12, 12, 24, 24, 24])
     rows = [[d["name"], p] for d in r["decks"] for p in d["problems"]]
     rows += [[d["name"], f"slide {u['slide']} looks like a question but wasn't recognised: {u['text']}"] for d in r["decks"]
              for u in d["unknown"]]
@@ -453,7 +466,8 @@ def apply_import(run_dir, category_keys, bank, writer, history=False):
         q = r["questions"][k]
         first = min(q["appearances"], key=lambda a: a["date"])
         n = len(q["appearances"])
-        rows.append({"question": q["question"], "answer": q["answer"], "question_image": place(q["question_image"]),
+        rows.append({"question": q["question"], "answer": q["answer"], "question_note": q.get("question_note", ""),
+                     "answer_note": q.get("answer_note", ""), "question_image": place(q["question_image"]),
                      "answer_image": place(q["answer_image"]), "media": place(q["media"]),
                      "notes": f"Imported from {first['deck']} ({first['date']})" + (f"; used {n} times" if n > 1 else "")})
         new_keys.append(k)

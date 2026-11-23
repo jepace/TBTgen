@@ -137,7 +137,9 @@ directly, with no Keynote needed. "Questions 1 - 5" intros give the categories, 
 (+ picture/clip and any extra text as question_note), answer slides the answers (+ answer_note, answer pictures).
 Repeats across decks are merged, with every appearance (deck, date from the file name, venue) kept.
 - Decks are read where they are (nothing is copied or uploaded); only the slide text and layout are read, so even
-  huge decks use little memory. On Google Drive for desktop, keep the deck folder available offline for speed.
+  huge decks use little memory. Decks in iCloud Drive or Google Drive that are "cloud only" get downloaded in
+  full when read (slow for a big archive): first right-click the folder → Download Now / Keep Downloaded (iCloud)
+  or Available offline (Google Drive). iCloud placeholders that can't be read are listed in a warning, not skipped silently.
 - Pictures and clips are optional; unticked, they're only counted (with total MB) so you can judge the space.
 - Output in `imports/<date-time>/`: `review.xlsx` (decks, categories, questions, "check these") and media.
 - In the Import tab, tick categories and **Add to the bank**: new questions are appended, existing ones reused,

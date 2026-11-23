@@ -259,8 +259,13 @@ def load_bank_quietly():
         return None
 
 
+ICLOUD_STUB = re.compile(r"^\.(.+\.(?:key|pptx))\.icloud$", re.I)
+
+
 def find_decks(folders):
-    found = []
+    """Returns (decks, cloud_only): cloud_only are decks iCloud hasn't downloaded to this Mac (older macOS shows
+    them as hidden ".Name.key.icloud" placeholder files, which can't be read)."""
+    found, cloud_only = [], []
     for f in folders:
         p = Path(f).expanduser()
         if p.is_file() and p.suffix.lower() in (".key", ".pptx"):
@@ -270,11 +275,15 @@ def find_decks(folders):
             print(f"NOTE: {p} doesn't exist")
             continue
         for x in sorted(p.rglob("*")):
+            stub = ICLOUD_STUB.match(x.name)
+            if stub:
+                cloud_only.append(x.with_name(stub.group(1)))
+                continue
             if x.suffix.lower() in (".key", ".pptx") and not x.name.startswith(("~$", "._")):
                 if any(part.endswith(".key") for part in x.relative_to(p).parts[:-1]):
                     continue  # inside a .key package folder
                 found.append(x)
-    return found
+    return found, cloud_only
 
 
 def main():
@@ -286,9 +295,16 @@ def main():
     ap.add_argument("--no-bank", action="store_true", help="don't compare with the current question bank")
     a = ap.parse_args()
 
-    decks = find_decks(a.folders)
+    decks, cloud_only = find_decks(a.folders)
+    if cloud_only:
+        print(f"WARNING: {len(cloud_only)} deck(s) are in iCloud but not downloaded to this Mac, so they're skipped:")
+        for c in cloud_only[:10]:
+            print(f"   {c}")
+        if len(cloud_only) > 10:
+            print(f"   … and {len(cloud_only) - 10} more")
+        print("   In Finder, right-click the folder > Download Now (or Keep Downloaded), wait, then scan again.")
     if not decks:
-        sys.exit("No .key or .pptx files found.")
+        sys.exit("No .key or .pptx files found." + (" (Only iCloud placeholders: download them first.)" if cloud_only else ""))
     out = Path(a.out) if a.out else ROOT / "imports" / dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
     bank = None if a.no_bank else load_bank_quietly()

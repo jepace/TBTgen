@@ -65,6 +65,7 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   Decks are read in place, never copied: .key reads only Index/*.iwa (media sizes from the listing, bytes only when
   importing); .pptx is read with zipfile+lxml (not python-pptx, which loaded every video into RAM), pictures/clips
   named by zip CRC+size. 405 MB test deck: 22 MB peak memory.
+  find_decks() reports iCloud placeholders (".Name.key.icloud", older macOS) as cloud_only with a WARNING.
 - Video style parity idea (not done): one shared layout spec used by both the pptx builder and video.py. Data cached until
   "Reload data". `build.check_sets()` = per-set checks without a schedule.
 - Future idea (not started): an AI voice host (TTS, possibly a licensed

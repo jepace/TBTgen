@@ -177,3 +177,5 @@ python3 build.py --ids                   # .xlsx only: fill in missing IDs
   file readable only by you; if you made it by hand, `chmod 600 tbtgen_config.json`).
 - The sheet's web app accepts only requests with the key, and only writes the columns TBTgen edits. Text that
   starts with `=` is stored as text, never as a formula.
+- Picture/clip paths in the sheet must stay inside `assets/` (absolute paths and `..` are refused by Check), and
+  file names made from venue, host or set names can't point outside `out/`. No command is ever run through a shell.

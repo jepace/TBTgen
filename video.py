@@ -264,7 +264,7 @@ def slide_question(c, qq, num, kind, logo_static=False):
     if qq["media"]:
         c.picture(build.music_frame(), *box)
     elif qq["question_image"]:
-        c.picture(ASSETS / qq["question_image"], *box)
+        c.picture(build.asset(qq["question_image"]), *box)
     return None
 
 
@@ -273,7 +273,7 @@ def slide_answer(c, qq, num, kind, revealed):
     c.logo()
     right = (5.6, top, 7.4, 7.2 - top)
     if qq["question_image"] and not qq["media"]:
-        c.picture(ASSETS / qq["question_image"], *right)
+        c.picture(build.asset(qq["question_image"]), *right)
     elif qq["media"] and kind_of(qq, kind) == "music":
         c.picture(build.music_frame(), *right)
     if not revealed:
@@ -288,7 +288,7 @@ def slide_answer(c, qq, num, kind, revealed):
         if img_box == right:  # cover the question picture
             c.d.rectangle([c.px(right[0]), c.px(right[1]), c.px(right[0] + right[2]), c.px(right[1] + right[3])],
                           fill="black")
-        c.picture(ASSETS / qq["answer_image"], *img_box)
+        c.picture(build.asset(qq["answer_image"]), *img_box)
 
 
 def slide_pencils(c, rnd):
@@ -413,7 +413,7 @@ def make_video(bank, set_id, outdir, seconds=30, answer_seconds=6, height=720, m
     has_bonus = any(build.is_yes(r["bonus"]) for r in slots)
     outdir = Path(outdir) / "video"
     outdir.mkdir(parents=True, exist_ok=True)
-    final = outdir / f"{set_id} at-home.mp4"
+    final = outdir / f"{build.safe_name(set_id)} at-home.mp4"
     tmp = Path(tempfile.mkdtemp(prefix="tbtvideo_", dir=build.CACHE if build.CACHE.exists() else None))
     jobs = []  # (kind, args...) in play order
 
@@ -449,7 +449,7 @@ def make_video(bank, set_id, outdir, seconds=30, answer_seconds=6, height=720, m
                 box = slide_question(c, qq, num, cat["type"])
                 img = c.save(tmp / f"{len(jobs):04d}_q{num}.png")
                 clip = (qq.get("clip_start"), qq.get("clip_end"))
-                mpath = ASSETS / qq["media"] if qq["media"] else None
+                mpath = build.asset(qq["media"]) if qq["media"] else None
                 dur = float(qq.get("video_seconds") or 0) or seconds
                 if mpath:
                     dur = max(dur, media_seconds(mpath, clip) + media_extra)
@@ -496,8 +496,8 @@ def make_video(bank, set_id, outdir, seconds=30, answer_seconds=6, height=720, m
                 str(final)])
     length = build.ffprobe_dur(final)
     # keep a poster image for the app, then clean up
-    shutil.copy(next(p for p in sorted(tmp.glob("0000_*.png"))), outdir / f"{set_id} at-home.png")
-    (outdir / f"{set_id} at-home.json").write_text(json.dumps(
+    shutil.copy(next(p for p in sorted(tmp.glob("0000_*.png"))), outdir / f"{build.safe_name(set_id)} at-home.png")
+    (outdir / f"{build.safe_name(set_id)} at-home.json").write_text(json.dumps(
         {"set_id": set_id, "seconds": seconds, "answer_seconds": answer_seconds, "height": height,
          "media": media, "length_seconds": round(length), "skipped": skipped}))
     shutil.rmtree(tmp, ignore_errors=True)

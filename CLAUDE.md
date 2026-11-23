@@ -76,4 +76,7 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - Security: app checks Host header (127.0.0.1/localhost:port, anti DNS-rebinding) + per-launch token; import scan
   passes folders after "--"; text starting with "=" is written as text (gs toCell_ prefixes ', XlsxWriter data_type s).
   build.sheet_call always POSTs (key only in the body); reads are POST action "tables"; doGet refuses everything.
+- Paths: sheet file cells go through build.asset()/asset_problem() (must resolve inside assets/, else check() errors);
+  output names through build.safe_name() (deck stem from venue+host, video from set_id); app import runs via
+  import_dir() (strict name regex). All subprocess calls use arg lists (no shell). review.xlsx "=" cells forced text.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

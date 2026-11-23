@@ -280,8 +280,8 @@ def check_sets(bank, set_ids):
                     errs.append(f"Set {set_id}: question {qid} is in both {seen_q[qid]} and {cid}")
                 seen_q[qid] = cid
                 for col in ("question_image", "answer_image", "media"):
-                    if qq[col] and not (ASSETS / qq[col]).exists():
-                        errs.append(f"Question {qid}: missing file assets/{qq[col]}")
+                    if qq[col] and asset_problem(qq[col]):
+                        errs.append(f"Question {qid}: {asset_problem(qq[col])}")
         if not bank["tiebreakers"].get(set_id):
             warns.append(f"Set {set_id}: no tiebreaker questions")
     return errs, warns
@@ -698,9 +698,31 @@ def countdown_logo(slide, timing, seconds):
     timing.auto.append(("wipe", color.shape_id, int(seconds * 1000), "up"))
 
 
+def asset(rel):
+    """The file a sheet cell names (relative to assets/). Paths that would leave assets/ (absolute paths, "..",
+    symlinks pointing out) are never used: they come back as a path that doesn't exist, and check() reports them."""
+    root = ASSETS.resolve()
+    p = (root / str(rel or "").strip()).resolve()
+    return p if root in p.parents else root / ".outside-assets-not-allowed"
+
+
+def asset_problem(rel):
+    """None if the file named in a sheet cell is usable, else why not."""
+    root = ASSETS.resolve()
+    if root not in (root / str(rel).strip()).resolve().parents:
+        return f"assets/{rel} is outside the assets folder (not allowed)"
+    return None if asset(rel).is_file() else f"missing file assets/{rel}"
+
+
+def safe_name(text, fallback="untitled"):
+    """Text from the sheet or calendar made safe as a file name: no folders, no hidden files, no odd characters."""
+    s = re.sub(r'[/\\:\x00-\x1f<>"|?*]+', "-", str(text)).strip(" .-")
+    return s[:120] or fallback
+
+
 def venue_logo(venue):
     """The venue's logo, or the Trivia By Troy logo if the venue has none yet."""
-    p = ASSETS / str(venue.get("logo") or "")
+    p = asset(venue.get("logo"))
     return p if venue.get("logo") and p.exists() else ASSETS / "brand/tbt_logo.png"
 
 
@@ -780,10 +802,10 @@ def slide_category(deck, cat, first_q, bonus):
 
 def q_media(qq, kind):
     """Return (question_video, question_poster, answer_video|None, answer_poster|None, clip_seconds)."""
-    src = ASSETS / qq["media"]
+    src = asset(qq["media"])
     if kind == "music" or src.suffix.lower() in (".mp3", ".m4a", ".wav", ".aac"):
         qv = still_plus_audio(music_frame(), src, qq["clip_start"], qq["clip_end"])
-        art = ASSETS / qq["answer_image"] if qq["answer_image"] else music_frame()
+        art = asset(qq["answer_image"]) if qq["answer_image"] else music_frame()
         av = still_plus_audio(art, src, qq["clip_start"], qq["clip_end"])
         return qv, music_frame(), av, art, ffprobe_dur(qv)
     v = trimmed_video(src, qq["clip_start"], qq["clip_end"])
@@ -805,7 +827,7 @@ def slide_question(deck, cat, qq, num, settings):
         t.auto.append(("play", vid.shape_id, int(clip * 1000)))
         t.media.append(vid.shape_id)
     elif qq["question_image"]:
-        picture(s, ASSETS / qq["question_image"], *box)  # shown immediately, no animation
+        picture(s, asset(qq["question_image"]), *box)  # shown immediately, no animation
     countdown_logo(s, t, seconds)
     t.apply(s)
     auto_advance(s, seconds)
@@ -822,7 +844,7 @@ def slide_answer(deck, cat, qq, num):
     right = (Inches(5.6), top, Inches(7.4), Inches(7.2) - top)
     reveal = []
     if qq["question_image"] and not qq["media"]:
-        picture(s, ASSETS / qq["question_image"], *right)
+        picture(s, asset(qq["question_image"]), *right)
     ans = text(s, Inches(0.5), top + Inches(0.15), Inches(4.9), Inches(1.4), qq["answer"], size=26, bold=True, color=GOLD,
                markup=True)
     t.text_ids.add(ans.shape_id)
@@ -846,7 +868,7 @@ def slide_answer(deck, cat, qq, num):
         t.media.append(vid.shape_id)
     elif qq["answer_image"]:
         box = left_img if (qq["question_image"] and not qq["media"]) else right
-        img = picture(s, ASSETS / qq["answer_image"], *box)
+        img = picture(s, asset(qq["answer_image"]), *box)
         reveal.append(("appear", img.shape_id))
     t.clicks.append(reveal)
     t.apply(s)
@@ -942,7 +964,7 @@ def build_deck(bank, row, outdir):
     picture(s, ASSETS / "brand/feedback_qr.jpg", 0, 0, W, H)
 
     outdir.mkdir(parents=True, exist_ok=True)
-    stem = f"{as_date(row['date'])} {venue['name']}" + (f" ({host_txt})" if host_txt else "")
+    stem = safe_name(f"{as_date(row['date'])} {venue['name']}" + (f" ({host_txt})" if host_txt else ""))
     deck.prs.save(outdir / f"{stem}.pptx")
     (outdir / f"{stem} - answer key.txt").write_text(plain("\n".join(key_lines)) + "\n")
     return outdir / f"{stem}.pptx", total_secs
@@ -1092,7 +1114,7 @@ def main():
         sys.exit("Nothing to build: no matching Schedule rows with a venue and a set.")
     for r in schedule:
         v = bank["venues"][r["venue_id"]]
-        if not (v.get("logo") and (ASSETS / str(v["logo"])).exists()):
+        if not (v.get("logo") and asset(v["logo"]).is_file()):
             print(f"NOTE: {v['name']} has no logo file yet; using the Trivia By Troy logo")
 
     errs, warns = check(bank, schedule)

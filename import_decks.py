@@ -390,6 +390,9 @@ def write_review(r, path):
             c.font, c.fill = Font(bold=True, color="FFFFFF"), head
         for row in rows:
             ws.append(row)
+            for c in ws[ws.max_row]:  # deck text that starts with "=" stays text, never a formula
+                if isinstance(c.value, str) and c.value.startswith("="):
+                    c.data_type = "s"
         for i, w in enumerate(widths):
             ws.column_dimensions[chr(65 + i)].width = w
         for row in ws.iter_rows(min_row=2):

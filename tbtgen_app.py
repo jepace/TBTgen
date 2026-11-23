@@ -157,11 +157,11 @@ def api_week(spec):
 
 
 def video_info(set_id):
-    meta = OUT / "video" / f"{set_id} at-home.json"
+    meta = OUT / "video" / f"{build.safe_name(set_id)} at-home.json"
     if meta.exists():
         info = json.loads(meta.read_text())
-        info["file"] = f"video/{set_id} at-home.mp4"
-        info["poster"] = f"video/{set_id} at-home.png"
+        info["file"] = f"video/{build.safe_name(set_id)} at-home.mp4"
+        info["poster"] = f"video/{build.safe_name(set_id)} at-home.png"
         return info
     return None
 
@@ -320,7 +320,7 @@ def api_venues():
         upcoming = sorted(d for d in nights.get(vid, []) if d >= today)
         logo = str(v.get("logo") or "")
         out.append({"venue_id": vid, "name": str(v.get("name", "")), "logo": logo,
-                    "logo_ok": bool(logo) and (ASSETS / logo).is_file(), "region": str(v.get("region", "")),
+                    "logo_ok": bool(logo) and build.asset(logo).is_file(), "region": str(v.get("region", "")),
                     "night": str(v.get("night", "")), "upcoming_nights": str(v.get("upcoming_nights", "")),
                     "active": str(v.get("active", "")).strip().upper() not in ("N", "NO", "FALSE", "0"),
                     "calendar_name": str(v.get("calendar_name", "")), "next_night": upcoming[0] if upcoming else "",
@@ -358,9 +358,17 @@ def api_import_runs():
     return {"runs": runs}
 
 
+def import_dir(name):
+    """An import run folder by its name (as listed); anything else (paths, "..", hidden names) is refused."""
+    name = str(name or "")
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name):
+        raise ValueError("unknown import")
+    return IMPORTS / name
+
+
 def api_import_run(name):
     import import_decks as imp
-    d = IMPORTS / Path(name).name
+    d = import_dir(name)
     r = json.loads((d / "import.json").read_text())
     applied = json.loads((d / "applied.json").read_text()) if (d / "applied.json").exists() else {"questions": {}, "categories": {}}
     try:
@@ -426,7 +434,7 @@ def api_status():
             st["settings"] = {k: str(v) for k, v in bank["settings"].items() if k != "calendar_id"}
             st["assets_missing"] = sorted({qq[col] for qq in bank["qs"].values()
                                            for col in ("question_image", "answer_image", "media")
-                                           if qq.get(col) and not (ASSETS / qq[col]).exists()})[:30]
+                                           if qq.get(col) and build.asset_problem(qq[col])})[:30]
     return st
 
 
@@ -613,7 +621,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/import/run":
                 return self.send_json(api_import_run(q.get("name", "")))
             if u.path == "/api/import/asset":
-                p = safe_under(IMPORTS / Path(q.get("run", "")).name / "assets", q.get("name", ""))
+                p = safe_under(import_dir(q.get("run")) / "assets", q.get("name", ""))
                 if not p:
                     return self.send_json({"error": "not found"}, 404)
                 return self.send_file(p)
@@ -726,7 +734,7 @@ class Handler(BaseHTTPRequestHandler):
             import bank_write
             import import_decks as imp
             try:
-                res = imp.apply_import(IMPORTS / Path(body.get("run", "")).name, body.get("category_keys") or [],
+                res = imp.apply_import(import_dir(body.get("run")), body.get("category_keys") or [],
                                        get_bank(), bank_write.writer(ROOT), history=bool(body.get("history")))
             except (bank_write.WriteError, ValueError, FileNotFoundError) as e:
                 return self.send_json({"error": str(e)}, 400)
@@ -736,7 +744,10 @@ class Handler(BaseHTTPRequestHandler):
                 DATA["bank"] = None
             return self.send_json({"ok": True, **res})
         if path == "/api/import/open-review":
-            p = IMPORTS / Path(body.get("run", "")).name / "review.xlsx"
+            try:
+                p = import_dir(body.get("run")) / "review.xlsx"
+            except ValueError as e:
+                return self.send_json({"error": str(e)}, 400)
             if p.exists():
                 open_path(p)
             return self.send_json({"ok": p.exists()})

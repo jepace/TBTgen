@@ -94,6 +94,19 @@ Extra text on the slides: **question_note** is shown smaller under the question 
 **answer_note** is revealed together with the answer (scoring note, fun fact). Both are optional and appear in the
 deck and the at-home video; the old-deck importer fills them from any extra text it finds. The **notes** column is
 for you only and never appears on a slide.
+
+**Formatting** works in the question, answer, both notes and tiebreaker questions:
+
+| Type | Shows as |
+|---|---|
+| `*italic*` | *italic* (inside an italic note it turns upright, for emphasis) |
+| `**bold**` | **bold** |
+| `***both***` | bold italic |
+| `[red]text[/red]` | red text |
+| `[gold]text[/gold]` | gold text (`[/]` also closes a colour) |
+
+A `*` only counts at the edge of a word, so M\*A\*S\*H and Q\*bert stay as typed; `\*` gives a literal star.
+The question editor shows a live slide preview. Answer keys, searching and the AI get the plain text.
 Venues have an **audience** (who usually plays there). Then:
 - each set shows an **Age mix** (how many of its questions each generation is likely to know), live in the set editor too;
 - the Nights tab shows each venue's audience and flags "⚠ light on Gen Z" when under a quarter of the set's

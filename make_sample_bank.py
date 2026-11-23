@@ -211,9 +211,9 @@ DIFF[("holiday_travel", 5)] = ""  # one left unrated on purpose
 
 # Extra text shown on the slides (question_note under the question; answer_note revealed with the answer)
 QNOTE = {("music_tg", n): "One point for the title, one for the artist" for n in range(1, 6)}
-QNOTE[("nov_bdays", 3)] = "Hint: he wrote Tom Sawyer"
-ANOTE = {("music_tg", n): "One Point for Title · One Point for Artist" for n in range(1, 6)}
-ANOTE[("turkey", 5)] = "Minnesota raises around 40 million turkeys a year"
+QNOTE[("nov_bdays", 3)] = "Hint: he wrote *The Adventures of Tom Sawyer*"
+ANOTE = {("music_tg", n): "One Point for [gold]Title[/gold] · One Point for [gold]Artist[/gold]" for n in range(1, 6)}
+ANOTE[("turkey", 5)] = "Minnesota raises around [red]40 million[/red] turkeys a year"
 ANOTE[("tg_potluck", 1)] = "Wisconsin grows more than half of the country's cranberries"
 
 sheet("Questions", ["question_id", "question", "answer", "question_image", "answer_image", "media",

@@ -222,7 +222,8 @@ def api_questions(q, cat, limit=300, gen="", diff=""):
         qdiff = build.parse_diff(qq.get("difficulty"))
         if diff == "unrated" and qdiff in build.DIFFS or diff and diff != "unrated" and qdiff != diff:
             continue
-        hay = f"{qid} {qq['question']} {qq['answer']} {qq.get('notes', '')}".lower()
+        hay = build.plain(f"{qid} {qq['question']} {qq['answer']} {qq.get('question_note', '')} {qq.get('answer_note', '')} "
+                              f"{qq.get('notes', '')}").lower()
         if any(w not in hay for w in words):
             continue
         hist = sorted(by_q.get(qid, []), reverse=True)
@@ -888,6 +889,10 @@ select.setpick{font-size:13px;padding:3px 6px}
 .dtag.easy{color:var(--ok)}.dtag.medium{color:var(--warn)}.dtag.hard{color:var(--bad)}
 @media (max-width:760px){.f{grid-template-columns:1fr}.f>label{padding-top:0}.sgrid{grid-template-columns:1fr}}
 @media (max-width:760px){.grid3{grid-template-columns:1fr}.hide-sm{display:none}input[type=search]{min-width:0}}
+.mk-red{color:#d32f2f}.mk-gold{color:#b8860b}
+.slideprev{background:#000;color:#fff;border-radius:8px;padding:12px 14px;font-family:"Trebuchet MS",sans-serif;line-height:1.3}
+.slideprev .mk-red{color:#e53935}.slideprev .mk-gold{color:#f5c242}.slideprev .pn .mi{font-style:normal}.slideprev .pq{font-weight:bold;white-space:pre-wrap}
+.slideprev .pn{font-style:italic;font-size:.88em;margin-top:2px;white-space:pre-wrap}.slideprev .pa{color:#f5c242;font-weight:bold;font-size:1.2em;margin-top:10px}
 </style></head><body><main>
 <header><h1><b>TBT</b>gen</h1><span class="pill" id="source">…</span><span class="pill busy hidden" id="busy" title="Show progress"></span>
 <span class="spacer"></span><button id="reloadData" title="Read the spreadsheet again">Reload data</button>
@@ -1058,6 +1063,13 @@ const S={week:"next",nights:[],dayOn:new Set(DAYS),polling:null,files:[],fKind:"
 const store={get(k,d){try{const v=localStorage.getItem("tbt_"+k);return v===null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("tbt_"+k,JSON.stringify(v))}catch(e){}}};
 const get=p=>fetch(p+(p.includes("?")?"&":"?")+"t="+T).then(r=>r.json());
 const post=(p,b)=>fetch(p,{method:"POST",headers:{"Content-Type":"application/json","X-TBTgen-Token":T},body:JSON.stringify(b||{})}).then(r=>r.json());
+// slide-text markup, same rules as build.markup_runs: *italic* **bold** [red]..[/red] [gold]..[/gold]
+function md(s){let t=esc(s).replace(/\\\*/g,"\x07").replace(/\\\[/g,"\x08"),p;
+  do{p=t;t=t.replace(/(?<![\w*])\*\*\*(?=[^\s*])([\s\S]+?)(?<=[^\s*])\*\*\*(?![\w*])/g,"<b><i>$1</i></b>")
+    .replace(/(?<![\w*])\*\*(?=[^\s*])([\s\S]+?)(?<=[^\s*])\*\*(?![\w*])/g,"<b>$1</b>")
+    .replace(/(?<![\w*])\*(?=[^\s*])([\s\S]+?)(?<=[^\s*])\*(?![\w*])/g,'<i class="mi">$1</i>')
+    .replace(/\[(red|gold)\]([\s\S]*?)\[\/(?:\1)?\]/gi,(m,c,x)=>`<span class="mk-${c.toLowerCase()}">${x}</span>`)}while(p!==t);
+  return t.replace(/\x07/g,"*").replace(/\x08/g,"[")}
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fileUrl=(rel,dl)=>`/api/file?name=${encodeURIComponent(rel)}&t=${T}${dl?"&download=1":""}`;
 const assetUrl=rel=>`/api/asset?name=${encodeURIComponent(rel)}&t=${T}`;
@@ -1136,7 +1148,7 @@ async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$
   $("#qCount").textContent=r.matches===r.total?`${r.total} questions`:`${r.matches} of ${r.total}`+(r.results.length<r.matches?` (first ${r.results.length} shown)`:"");
   $("#qRows").innerHTML=r.results.length?r.results.map((x,i)=>{const img=x.question_image||x.answer_image;
     return `<tr class="click${x.retired?" dim":""}" data-i="${i}"><td class="hide-sm">${img?`<img class="thumb" loading="lazy" src="${assetUrl(img)}" alt="">`:x.media?'<span class="tag">'+(/\.(mp3|m4a|wav|aac)$/i.test(x.media)?"♪ audio":"▶ video")+'</span>':""}</td>
-      <td class="mono">${esc(x.id)}</td><td>${esc(x.question)}${x.retired?' <span class="tag">retired</span>':""}<div class="row" style="gap:4px">${dtag(x.difficulty)}${gchips(x.generations)}</div></td><td><strong>${esc(x.answer)}</strong></td>
+      <td class="mono">${esc(x.id)}</td><td>${md(x.question)}${x.retired?' <span class="tag">retired</span>':""}<div class="row" style="gap:4px">${dtag(x.difficulty)}${gchips(x.generations)}</div></td><td><strong>${md(x.answer)}</strong></td>
       <td class="hide-sm small">${x.categories.map(c=>esc(c.title)).join("<br>")||'<span class="muted">none</span>'}</td>
       <td class="hide-sm small" style="white-space:nowrap">${x.times?`${x.times}× · ${fmtDate(x.last)}`:'<span class="muted">never</span>'}</td></tr>`}).join("")
     :`<tr><td colspan="6" class="empty">No questions match.</td></tr>`;
@@ -1146,8 +1158,8 @@ async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$
       ${x.question_image?`<div><div class="small muted">Question picture</div><img src="${assetUrl(x.question_image)}" alt=""></div>`:""}
       ${x.answer_image?`<div><div class="small muted">Answer picture</div><img src="${assetUrl(x.answer_image)}" alt=""></div>`:""}
       ${x.media?`<div><div class="small muted">Clip: ${esc(x.media)}</div>${/\.(mp3|m4a|wav|aac)$/i.test(x.media)?`<audio controls preload="none" src="${assetUrl(x.media)}"></audio>`:`<video controls preload="none" style="max-width:320px" src="${assetUrl(x.media)}"></video>`}</div>`:""}
-      <div style="flex:1;min-width:220px"><div style="white-space:pre-wrap">${esc(x.question)}</div>${x.question_note?`<div class="small"><i>${esc(x.question_note)}</i></div>`:""}
-      <div style="margin-top:6px">Answer: <strong>${esc(x.answer)}</strong>${x.answer_note?` <span class="small"><i>${esc(x.answer_note)}</i></span>`:""}</div>
+      <div style="flex:1;min-width:220px"><div style="white-space:pre-wrap">${md(x.question)}</div>${x.question_note?`<div class="small"><i>${md(x.question_note)}</i></div>`:""}
+      <div style="margin-top:6px">Answer: <strong>${md(x.answer)}</strong>${x.answer_note?` <span class="small"><i>${md(x.answer_note)}</i></span>`:""}</div>
       ${x.notes?`<div class="small muted">Notes: ${esc(x.notes)}</div>`:""}
       <div class="small" style="margin-top:6px">In: ${x.categories.map(c=>`${esc(c.title)} <span class="muted mono">${esc(c.id)}</span>`).join(", ")||"no category"}</div>
       <div class="small muted" style="margin-top:4px">${x.history.length?"Asked: "+x.history.map(h=>`${fmtDate(h.date)} ${esc(h.venue)}`).join(" · "):"Never asked yet"}</div>
@@ -1264,12 +1276,14 @@ async function assetPicker(root,name,kind,current){const box=root.querySelector(
 async function editQuestion(q,after,which){q=q||{};const isNew=!q.id;
   let getQ=()=>q.question_image||"",getA=()=>q.answer_image||"",getM=()=>q.media||"";  // until the pickers load
   const d=dialog(which||1,isNew?"New question":`Edit ${q.id}`,`<div class="f">
-    <label>Question</label><div><textarea data-f="question">${esc(q.question)}</textarea></div>
+    <label>Question</label><div><textarea data-f="question">${esc(q.question)}</textarea>
+      <div class="hint">Formatting for the question, answer and notes: <span class="mono">*italic*</span> · <span class="mono">**bold**</span> · <span class="mono">[red]red[/red]</span> · <span class="mono">[gold]gold[/gold]</span></div></div>
     <label>Answer</label><div><input type="text" data-f="answer" value="${esc(q.answer)}"></div>
     <label>Note under question</label><div><input type="text" data-f="question_note" value="${esc(q.question_note)}" placeholder="optional, e.g. One point each!">
       <div class="hint">Extra text on the question slide, shown smaller under the question</div></div>
     <label>Note with answer</label><div><input type="text" data-f="answer_note" value="${esc(q.answer_note)}" placeholder="optional, e.g. One point for title · one for artist">
       <div class="hint">Extra text revealed together with the answer (scoring note, fun fact…)</div></div>
+    <label>Slide preview</label><div><div class="slideprev" id="qPrev"></div></div>
     <label>Question picture</label><div data-asset="qimg"></div>
     <label>Answer picture</label><div data-asset="aimg"><div class="hint">optional: shown when the answer is revealed</div></div>
     <label>Song / movie clip</label><div><div data-asset="media"></div><div class="hint">for Music and Movie categories</div></div>
@@ -1290,6 +1304,10 @@ async function editQuestion(q,after,which){q=q||{};const isNew=!q.id;
       if(!v.question||!v.answer){toast("A question needs both the question and the answer",true);return}
       const r=await edit({op:"upsert",tab:"Questions",key:isNew?null:{question_id:q.id},values:v});if(!r)return;
       toast(isNew?`Added ${r.id}`:`Saved ${q.id}`);dd.close();if(after)after(r.id||q.id,v)}]]);
+  const prev=()=>{const g=f=>val(d,`[data-f=${f}]`);d.querySelector("#qPrev").innerHTML=
+    `<div class="pq">${md(g("question"))||'<span style="opacity:.5">Question text</span>'}</div>${g("question_note")?`<div class="pn">${md(g("question_note"))}</div>`:""}
+    <div class="pa">${md(g("answer"))||'<span style="opacity:.5">Answer</span>'}</div>${g("answer_note")?`<div class="pn">${md(g("answer_note"))}</div>`:""}`};
+  ["question","answer","question_note","answer_note"].forEach(f=>d.querySelector(`[data-f=${f}]`).addEventListener("input",prev));prev();
   [getQ,getA,getM]=await Promise.all([assetPicker(d,"qimg","images",q.question_image||""),assetPicker(d,"aimg","images",q.answer_image||""),assetPicker(d,"media","media",q.media||"")])}
 
 /* categories */
@@ -1331,7 +1349,7 @@ async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!
       const cid=isNew?r.id:c.id;
       const r2=await edit({op:"replace",tab:"CategoryQuestions",match:{category_id:cid},rows:slots.map((q,i)=>({position:i+1,question_id:q.id}))});if(!r2)return;
       toast(isNew?`Created ${cid}`:`Saved ${v.title}`);dd.close();loadCats()}]]);
-  const draw=()=>{d.querySelector("#slots").innerHTML=slots.length?slots.map((q,i)=>`<div class="slot"><span class="n">${i+1}</span><div class="t">${esc(q.question)}<div class="small"><strong>${esc(q.answer)}</strong> <span class="mono muted">${esc(q.id)}</span> ${dtag(q.difficulty)} ${gchips(q.generations)}</div></div>
+  const draw=()=>{d.querySelector("#slots").innerHTML=slots.length?slots.map((q,i)=>`<div class="slot"><span class="n">${i+1}</span><div class="t">${md(q.question)}<div class="small"><strong>${md(q.answer)}</strong> <span class="mono muted">${esc(q.id)}</span> ${dtag(q.difficulty)} ${gchips(q.generations)}</div></div>
       <button data-up="${i}" ${i?"":"disabled"}>↑</button><button data-dn="${i}" ${i<slots.length-1?"":"disabled"}>↓</button><button data-rm="${i}">✕</button></div>`).join("")
       :'<div class="muted small" style="padding:6px 0">No questions yet.</div>';
     d.querySelectorAll("[data-up]").forEach(b=>b.onclick=()=>{const i=+b.dataset.up;[slots[i-1],slots[i]]=[slots[i],slots[i-1]];draw()});
@@ -1339,7 +1357,7 @@ async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!
     d.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{slots.splice(+b.dataset.rm,1);draw();find()})};
   let ft=null;const find=async()=>{const q=d.querySelector("#qFind").value.trim(),box=d.querySelector("#qFound");if(!q){box.classList.add("hidden");return}
     const r=await get("/api/questions?q="+encodeURIComponent(q));const rs=(r.results||[]).filter(x=>!x.retired).slice(0,12);box.classList.remove("hidden");
-    box.innerHTML=rs.length?rs.map(x=>`<div><span class="t">${esc(x.question)}<br><span class="small"><strong>${esc(x.answer)}</strong> <span class="mono muted">${esc(x.id)}</span>
+    box.innerHTML=rs.length?rs.map(x=>`<div><span class="t">${md(x.question)}<br><span class="small"><strong>${md(x.answer)}</strong> <span class="mono muted">${esc(x.id)}</span>
       ${x.categories.length?`<span class="muted"> · in ${esc(x.categories.map(c=>c.title).join(", "))}</span>`:""}</span></span>
       <button class="sm" data-add="${esc(x.id)}" ${slots.length>=5||slots.some(s=>s.id===x.id)?"disabled":""}>${slots.some(s=>s.id===x.id)?"Added":"Add"}</button></div>`).join(""):'<div class="muted small">No matches</div>';
     box.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{const x=rs.find(y=>y.id===b.dataset.add);slots.push({id:x.id,question:x.question,answer:x.answer});draw();find()})};
@@ -1492,7 +1510,7 @@ function renderAiResults(list){return list.map((r,i)=>{const [cls,label]=VERDICT
   return `<div class="airesult"><div class="row" style="margin-bottom:4px"><span class="tag ${cls}">${label}</span><span class="mono muted small">${esc(r.id)}</span>
     ${r.verdict!=="unchecked"?`<span class="muted small">confidence: ${esc(r.confidence)}</span>`:""}<span class="spacer"></span>
     ${r.verdict!=="ok"&&r.verdict!=="unchecked"||r.accept_also.length?`<button class="sm primary" data-apply="${i}">Use suggestion…</button>`:""}</div>
-    <div class="q">${esc(r.question)}</div><div class="small">Answer: <strong>${esc(r.answer)}</strong></div>
+    <div class="q">${md(r.question)}</div><div class="small">Answer: <strong>${md(r.answer)}</strong></div>
     ${r.issues.length?`<ul>${r.issues.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
     ${sug?`<div class="sugg">${r.suggested_question?`<div><span class="muted">Suggested question:</span> ${esc(r.suggested_question)}</div>`:""}${r.suggested_answer?`<div><span class="muted">Suggested answer:</span> <strong>${esc(r.suggested_answer)}</strong></div>`:""}</div>`:""}
     ${r.accept_also.length?`<div class="small"><span class="muted">Also accept:</span> ${esc(r.accept_also.join(", "))}</div>`:""}
@@ -1556,7 +1574,7 @@ async function aiTag(body,title,which,after){if(!await aiReady())return;
   const r=await post("/api/ai/tag",body).catch(e=>({error:String(e)}));if(!d.open)return;const b=d.querySelector(".db");
   if(r.error){b.innerHTML=`<div class="note bad">${esc(r.error)}</div>`;return}
   b.innerHTML=`<div class="small muted" style="margin-bottom:10px">${esc(r.provider)} · ${esc(r.model)}${r.cost_usd!=null?` · about $${r.cost_usd.toFixed(3)}`:""} · adjust the ticks, then Save tags</div>
-    ${r.results.map((x,i)=>`<div class="airesult"><div class="q">${esc(x.question)}</div><div class="small">Answer: <strong>${esc(x.answer)}</strong> <span class="mono muted">${esc(x.id)}</span></div>
+    ${r.results.map((x,i)=>`<div class="airesult"><div class="q">${md(x.question)}</div><div class="small">Answer: <strong>${md(x.answer)}</strong> <span class="mono muted">${esc(x.id)}</span></div>
       <div class="row" style="margin-top:6px"><select data-td="${i}" style="font-size:13px;padding:3px 6px"><option value="">not rated</option>${DIFFS.map(dd=>`<option${dd===(x.missing?x.current_difficulty:x.suggested_difficulty||x.current_difficulty)?" selected":""}>${dd}</option>`).join("")}</select>
         ${gpick("t"+i,x.missing?x.current:x.suggested)}</div>
       <div class="small muted" style="margin-top:4px">${x.missing?"The AI skipped this one.":esc(x.why)}${x.current.length||x.current_difficulty?` · currently: ${esc([x.current_difficulty,...x.current].filter(Boolean).join(", "))}`:" · not tagged yet"}</div></div>`).join("")}`;
@@ -1629,7 +1647,7 @@ function renderImportCats(){const r=S.imData;if(!r)return;const qs=r.questions,q
         <td><strong>${esc(c.title)}</strong>${c.type!=="standard"?` <span class="tag">${esc(c.type)}</span>`:""} ${st}
           <div class="small muted">${esc(c.blurb).slice(0,120)}</div>
           <details><summary class="small">${c.questions.length} question${c.questions.length==1?"":"s"}</summary>${c.questions.map(k=>{const x=qs[k];
-            return `<div class="row small" style="margin:4px 0;align-items:flex-start">${img(x.question_image)}${img(x.answer_image)}<div style="flex:1">${esc(x.question)}${x.question_note?` <i class="muted">${esc(x.question_note)}</i>`:""}<br><strong>${esc(x.answer||"(no answer found)")}</strong>${x.answer_note?` <i class="muted">${esc(x.answer_note)}</i>`:""}
+            return `<div class="row small" style="margin:4px 0;align-items:flex-start">${img(x.question_image)}${img(x.answer_image)}<div style="flex:1">${md(x.question)}${x.question_note?` <i class="muted">${md(x.question_note)}</i>`:""}<br><strong>${md(x.answer||"(no answer found)")}</strong>${x.answer_note?` <i class="muted">${md(x.answer_note)}</i>`:""}
               ${x.media?' <span class="tag">♪/▶ clip</span>':x.media_names&&x.media_names.length&&!r.media.clips.imported?' <span class="tag">clip not imported</span>':""}${x.in_bank?` <span class="tag">${esc(x.in_bank)}</span>`:""}</div></div>`}).join("")}</details></td>
         <td class="small hide-sm">used ${c.appearances.length}× <div class="muted">${esc(dates[0])}${dates.length>1?` – ${esc(dates[dates.length-1])}`:""}</div></td></tr>`}).join("")||'<tr><td class="empty">Nothing matches.</td></tr>'}</tbody></table>
     <div class="row" style="margin-top:12px"><button class="primary" id="imAdd"></button>

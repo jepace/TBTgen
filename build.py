@@ -438,22 +438,89 @@ class Deck:
         return s
 
 
+# ------------------------------------------------------------------------- text markup
+# Question/answer/note cells may use:  *italic*  **bold**  [red]red text[/red]  [gold]gold text[/gold]
+# ("[/]" also closes a colour). A * only counts at the edge of a word, so M*A*S*H and Q*bert stay as typed;
+# \* and \[ give a literal * or [.
+MARK_COLORS = {"red": (0xE5, 0x39, 0x35), "gold": (0xF5, 0xC2, 0x42)}
+_ESC = {"\\*": "\x07", "\\[": "\x08"}
+_BOTH = re.compile(r"(?<![\w*])\*\*\*(?=[^\s*])(.+?)(?<=[^\s*])\*\*\*(?![\w*])", re.S)
+_BOLD = re.compile(r"(?<![\w*])\*\*(?=[^\s*])(.+?)(?<=[^\s*])\*\*(?![\w*])", re.S)
+_ITAL = re.compile(r"(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])", re.S)
+_COLOR = re.compile(r"\[(" + "|".join(MARK_COLORS) + r")\](.*?)\[/(?:\1)?\]", re.S | re.I)
+
+
+def markup_runs(s, bold=False, italic=False, color=None):
+    """Splits marked-up text into lines of runs (text, bold, italic, colour or None for the default).
+    ** turns bold on; * flips italic (so emphasis inside an italic note shows up as upright)."""
+    s = str(s if s is not None else "")
+    for k, v in _ESC.items():
+        s = s.replace(k, v)
+    prev = None
+    while prev != s:  # innermost-first is not needed: each pass converts whole pairs to control codes
+        prev = s
+        s = _BOTH.sub(lambda m: "\x01\x03" + m.group(1) + "\x04\x02", s)
+        s = _BOLD.sub(lambda m: "\x01" + m.group(1) + "\x02", s)
+        s = _ITAL.sub(lambda m: "\x03" + m.group(1) + "\x04", s)
+        s = _COLOR.sub(lambda m: "\x05" + m.group(1).lower() + "\x0b" + m.group(2) + "\x06", s)
+    lines, runs, buf = [], [], []
+    b, i, cols = 0, 0, []
+
+    def flush():
+        if buf:
+            runs.append(("".join(buf).replace("\x07", "*").replace("\x08", "["),
+                         bold or b > 0, italic != (i % 2 == 1), cols[-1] if cols else color))
+            buf.clear()
+    k = 0
+    while k < len(s):
+        ch = s[k]
+        if ch in "\x01\x02\x03\x04\x06\n":
+            flush()
+            if ch == "\x01": b += 1
+            elif ch == "\x02": b -= 1
+            elif ch == "\x03": i += 1
+            elif ch == "\x04": i -= 1
+            elif ch == "\x06": cols and cols.pop()
+            else:
+                lines.append(runs)
+                runs = []
+        elif ch == "\x05":
+            flush()
+            end = s.index("\x0b", k)
+            cols.append(s[k + 1:end])
+            k = end
+        else:
+            buf.append(ch)
+        k += 1
+    flush()
+    lines.append(runs)
+    return lines
+
+
+def plain(s):
+    """The text without markup (answer keys, AI prompts, searching, length estimates)."""
+    return "\n".join("".join(r[0] for r in line) for line in markup_runs(s))
+
+
 def text(slide, x, y, w, h, content, size=20, bold=False, italic=False, font=FONT, align=PP_ALIGN.LEFT,
-         anchor=MSO_ANCHOR.TOP, color=WHITE, spacing=None):
+         anchor=MSO_ANCHOR.TOP, color=WHITE, spacing=None, markup=False):
     tb = slide.shapes.add_textbox(x, y, w, h)
     tf = tb.text_frame
     tf.word_wrap = True
     tf.vertical_anchor = anchor
-    for i, line in enumerate(str(content).split("\n")):
-        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+    lines = markup_runs(content, bold, italic) if markup else \
+        [[(line, bold, italic, None)] for line in str(content).split("\n")]
+    for n, runs in enumerate(lines):
+        p = tf.paragraphs[0] if n == 0 else tf.add_paragraph()
         p.alignment = align
         if spacing:
             p.space_after = Pt(spacing)
-        r = p.add_run()
-        r.text = line
-        f = r.font
-        f.size, f.bold, f.italic, f.name = Pt(size), bold, italic, font
-        f.color.rgb = color
+        for t, b, i, col in runs or [("", bold, italic, None)]:
+            r = p.add_run()
+            r.text = t
+            f = r.font
+            f.size, f.bold, f.italic, f.name = Pt(size), b, i, font
+            f.color.rgb = RGBColor(*MARK_COLORS[col]) if col else color
     return tb
 
 
@@ -497,15 +564,15 @@ def question_block(slide, num, question, note=""):
     content area can start."""
     import math
     text(slide, Inches(0.35), Inches(0.2), Inches(11), Inches(0.7), f"Question {num}", size=28)
-    lines = sum(max(1, math.ceil(len(par) / 95)) for par in str(question).split("\n"))
+    lines = sum(max(1, math.ceil(len(par) / 95)) for par in plain(question).split("\n"))
     h = Inches(0.36) * lines + Inches(0.1)
-    text(slide, Inches(0.35), Inches(0.85), Inches(11.3), h, question, size=20, bold=True)
+    text(slide, Inches(0.35), Inches(0.85), Inches(11.3), h, question, size=20, bold=True, markup=True)
     bottom = Inches(0.85) + h
     note = str(note or "").strip()
     if note:
-        nlines = sum(max(1, math.ceil(len(par) / 115)) for par in note.split("\n"))
+        nlines = sum(max(1, math.ceil(len(par) / 115)) for par in plain(note).split("\n"))
         nh = Inches(0.3) * nlines + Inches(0.05)
-        text(slide, Inches(0.35), bottom, Inches(11.3), nh, note, size=16, italic=True)
+        text(slide, Inches(0.35), bottom, Inches(11.3), nh, note, size=16, italic=True, markup=True)
         bottom += nh
     return max(Inches(2.25), bottom + Inches(0.15))
 
@@ -754,17 +821,18 @@ def slide_answer(deck, cat, qq, num):
     reveal = []
     if qq["question_image"] and not qq["media"]:
         picture(s, ASSETS / qq["question_image"], *right)
-    ans = text(s, Inches(0.5), top + Inches(0.15), Inches(4.9), Inches(1.4), qq["answer"], size=26, bold=True, color=GOLD)
+    ans = text(s, Inches(0.5), top + Inches(0.15), Inches(4.9), Inches(1.4), qq["answer"], size=26, bold=True, color=GOLD,
+               markup=True)
     t.text_ids.add(ans.shape_id)
     reveal.append(("appear", ans.shape_id))
     img_top = top + Inches(1.6)
     anote = str(qq.get("answer_note", "") or "").strip()
     if anote:  # extra text revealed with the answer (scoring note, fun fact, ...)
         import math
-        alines = sum(max(1, math.ceil(len(par) / 22)) for par in str(qq["answer"]).split("\n"))
+        alines = sum(max(1, math.ceil(len(par) / 22)) for par in plain(qq["answer"]).split("\n"))
         ny = top + Inches(0.3) + Inches(0.45) * alines
-        nh = Inches(0.3) * sum(max(1, math.ceil(len(par) / 40)) for par in anote.split("\n")) + Inches(0.1)
-        nt = text(s, Inches(0.5), ny, Inches(4.9), nh, anote, size=16, italic=True)
+        nh = Inches(0.3) * sum(max(1, math.ceil(len(par) / 40)) for par in plain(anote).split("\n")) + Inches(0.1)
+        nt = text(s, Inches(0.5), ny, Inches(4.9), nh, anote, size=16, italic=True, markup=True)
         t.text_ids.add(nt.shape_id)
         reveal.append(("appear", nt.shape_id))
         img_top = max(img_top, ny + nh + Inches(0.15))
@@ -795,7 +863,8 @@ def slide_tiebreaker(deck, venue, tbs, with_answers):
         lines.append(f"{i}.  {tb['question']}")
         if with_answers:
             lines.append(f"       Answer: {tb['answer']}")
-    text(s, Inches(0.6), Inches(3.2), Inches(12), Inches(4), "\n".join(lines), size=20, bold=True, spacing=6)
+    text(s, Inches(0.6), Inches(3.2), Inches(12), Inches(4), "\n".join(lines), size=20, bold=True, spacing=6,
+         markup=True)
 
 
 # =============================================================== deck assembly
@@ -873,7 +942,7 @@ def build_deck(bank, row, outdir):
     outdir.mkdir(parents=True, exist_ok=True)
     stem = f"{as_date(row['date'])} {venue['name']}" + (f" ({host_txt})" if host_txt else "")
     deck.prs.save(outdir / f"{stem}.pptx")
-    (outdir / f"{stem} - answer key.txt").write_text("\n".join(key_lines) + "\n")
+    (outdir / f"{stem} - answer key.txt").write_text(plain("\n".join(key_lines)) + "\n")
     return outdir / f"{stem}.pptx", total_secs
 
 

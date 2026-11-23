@@ -284,6 +284,12 @@ def extract_json(text):
         raise AIError("couldn't read the AI's answer (bad JSON): try again")
 
 
+def _p(v):
+    """Text for a prompt: markup (*italic*, [red]..[/red]) removed."""
+    import build
+    return build.plain(_s(v))
+
+
 def _s(v):
     return "" if v is None else str(v).strip()
 
@@ -319,11 +325,11 @@ def check_questions(bank, qids, context=""):
               " If you aren't certain, say so and lower your confidence.")
     lines = [f"Category: {context}" if context else "", "Check these trivia questions:", ""]
     for qid, q in qs:
-        lines += [f"ID: {qid}", f"Question: {_s(q['question'])}", f"Answer: {_s(q['answer'])}"]
+        lines += [f"ID: {qid}", f"Question: {_p(q['question'])}", f"Answer: {_p(q['answer'])}"]
         if _s(q.get("question_note")):
-            lines.append(f"Shown under the question: {_s(q['question_note'])}")
+            lines.append(f"Shown under the question: {_p(q['question_note'])}")
         if _s(q.get("answer_note")):
-            lines.append(f"Shown with the answer: {_s(q['answer_note'])}")
+            lines.append(f"Shown with the answer: {_p(q['answer_note'])}")
         if _s(q.get("media")):
             lines.append("(This question plays a song or movie clip.)")
         lines.append("")
@@ -382,7 +388,7 @@ def generate(bank, topic, count=5, difficulty="mixed", notes="", ctype="standard
     blurbs = [_s(c.get("blurb")) for c in bank["cats"].values() if _s(c.get("blurb")) and _s(c.get("type")) in ("", "standard")]
     words = {w for w in re.findall(r"[a-z]{4,}", topic.lower())}
     related = [q for q in bank["qs"].values()
-               if words & set(re.findall(r"[a-z]{4,}", f"{_s(q['question'])} {_s(q['answer'])}".lower()))][:40]
+               if words & set(re.findall(r"[a-z]{4,}", f"{_p(q['question'])} {_p(q['answer'])}".lower()))][:40]
     verify = " Verify facts with a web search." if o["web"] else ""
     parts = [f"Topic: {topic}", f"Number of questions: {count}",
              f"Difficulty: {difficulty if difficulty in ('easy', 'medium', 'hard') else 'a mix of easy, medium and hard'}"]
@@ -396,11 +402,11 @@ def generate(bank, topic, count=5, difficulty="mixed", notes="", ctype="standard
         parts.append(f"Target audience: {gen_line(generations)}")
     if _s(notes):
         parts.append(f"Notes from the host: {_s(notes)}")
-    parts += ["", "Example questions in our style:"] + [f"- Q: {_s(q['question'])}  A: {_s(q['answer'])}" for q in examples]
+    parts += ["", "Example questions in our style:"] + [f"- Q: {_p(q['question'])}  A: {_p(q['answer'])}" for q in examples]
     parts += ["", "Example category blurbs:"] + [f"- {b}" for b in rnd.sample(blurbs, min(4, len(blurbs)))]
     if related:
         parts += ["", "Existing questions on similar subjects (don't repeat these):"] + [
-            f"- {_s(q['question'])} ({_s(q['answer'])})" for q in related]
+            f"- {_p(q['question'])} ({_p(q['answer'])})" for q in related]
     text, usage = prov.run(GEN_SYSTEM.format(verify=verify), "\n".join(parts), o["web"])
     data = extract_json(text)
     qs = []
@@ -443,7 +449,7 @@ def tag_generations(bank, qids):
         raise AIError("no questions to tag")
     lines = ["Tag these trivia questions:", ""]
     for qid, q in qs:
-        lines += [f"ID: {qid}", f"Question: {_s(q['question'])}", f"Answer: {_s(q['answer'])}", ""]
+        lines += [f"ID: {qid}", f"Question: {_p(q['question'])}", f"Answer: {_p(q['answer'])}", ""]
     text, usage = prov.run(TAG_SYSTEM, "\n".join(lines).strip(), False)
     data = extract_json(text)
     got = {_s(r.get("id")): r for r in data.get("results") or []}

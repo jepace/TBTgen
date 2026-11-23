@@ -14,6 +14,7 @@ branding, no tiebreaker.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -38,6 +39,7 @@ FONT_DIRS = [Path.home() / "Library/Fonts", Path("/Library/Fonts"), Path("/Syste
 FONT_FILES = {  # first match wins; patterns are case-insensitive file-name globs
     "body": ["Trebuchet MS.ttf", "trebuc.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"],
     "bold": ["Trebuchet MS Bold.ttf", "trebucbd.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"],
+    "italic": ["Trebuchet MS Italic.ttf", "trebucit.ttf", "DejaVuSans-Oblique.ttf", "LiberationSans-Italic.ttf"],
     "bolditalic": ["Trebuchet MS Bold Italic.ttf", "trebucbi.ttf", "DejaVuSans-BoldOblique.ttf",
                    "LiberationSans-BoldItalic.ttf"],
     "script": ["SavoyeLET.ttc", "Savoye LET.ttc", "*avoye*", "LiberationSerif-Italic.ttf", "DejaVuSerif-Italic.ttf"],
@@ -109,6 +111,55 @@ class Canvas:
                     line = w
             lines.append(line)
         return lines
+
+    STYLE_KIND = {(False, False): "body", (True, False): "bold", (False, True): "italic", (True, True): "bolditalic"}
+
+    def rich(self, x, y, w, text, kind="body", pt=20, color=WHITE, spacing=1.2):
+        """Like text() (left-aligned) but honours *italic* / **bold** / [red]..[/red] markup (see build.markup_runs);
+        returns the bottom (inches)."""
+        base_b, base_i = {"bold": (True, False), "bolditalic": (True, True), "italic": (False, True)}.get(kind, (False, False))
+        fonts = {}
+
+        def fnt(b, i):
+            k = self.STYLE_KIND[(b, i)]
+            if k not in fonts:
+                fonts[k] = self.font(k, pt)
+            return fonts[k]
+        width = self.px(w)
+        out = []  # lines of [(text, font, fill)]
+        for runs in build.markup_runs(text, base_b, base_i):
+            words, cur, gap = [], [], False   # words = [(space_before, [(piece, font, fill)])]
+            for t, b, i, col in runs:
+                fill = build.MARK_COLORS[col] if col else color
+                for piece in re.findall(r"\s+|\S+", t):
+                    if piece.isspace():
+                        if cur:
+                            words.append(cur)
+                            cur = []
+                    else:
+                        cur.append((piece, fnt(b, i), fill))
+            if cur:
+                words.append(cur)
+            line, lw = [], 0
+            for grp in words:
+                gw = sum(self.d.textlength(p, font=f) for p, f, _ in grp)
+                sp = self.d.textlength(" ", font=grp[0][1]) if line else 0
+                if line and lw + sp + gw > width:
+                    out.append(line)
+                    line, lw, sp = [], 0, 0
+                if line:
+                    line.append((" ", grp[0][1], grp[0][2]))
+                line += grp
+                lw += sp + gw
+            out.append(line)
+        lh = fnt(base_b, base_i).size * spacing
+        top = self.px(y)
+        for n, line in enumerate(out):
+            lx = self.px(x)
+            for p, f, fill in line:
+                self.d.text((lx, top + n * lh), p, font=f, fill=fill)
+                lx += self.d.textlength(p, font=f)
+        return (top + lh * len(out)) / self.px_per_in
 
     def text(self, x, y, w, text, kind="body", pt=20, color=WHITE, align="left", h=None, valign="top",
              spacing=1.2):
@@ -194,9 +245,9 @@ def slide_category(c, cat, first_q, nq, bonus):
 
 def question_top(c, num, question, note=""):
     c.text(0.35, 0.2, 11, f"Question {num}", "body", 28)
-    bottom = c.text(0.35, 0.85, 11.3, question, "bold", 20)
+    bottom = c.rich(0.35, 0.85, 11.3, question, "bold", 20)
     if str(note or "").strip():
-        bottom = c.text(0.35, bottom + 0.02, 11.3, str(note).strip(), "bolditalic", 16)
+        bottom = c.rich(0.35, bottom + 0.02, 11.3, str(note).strip(), "bolditalic", 16)
     return max(2.25, bottom + 0.15)
 
 
@@ -227,10 +278,10 @@ def slide_answer(c, qq, num, kind, revealed):
         c.picture(build.music_frame(), *right)
     if not revealed:
         return
-    below = c.text(0.5, top + 0.15, 4.9, qq["answer"], "bold", 26, GOLD)
+    below = c.rich(0.5, top + 0.15, 4.9, qq["answer"], "bold", 26, GOLD)
     img_top = top + 1.6
     if str(qq.get("answer_note", "") or "").strip():
-        below = c.text(0.5, below + 0.1, 4.9, str(qq["answer_note"]).strip(), "bolditalic", 16)
+        below = c.rich(0.5, below + 0.1, 4.9, str(qq["answer_note"]).strip(), "bolditalic", 16)
         img_top = max(img_top, below + 0.2)
     if qq["answer_image"]:
         img_box = (0.5, img_top, 4.9, 7.2 - img_top) if (qq["question_image"] and not qq["media"]) else right

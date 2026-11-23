@@ -70,4 +70,7 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - Slide notes: Questions.question_note (smaller italic under the question, on question + answer slides) and
   answer_note (italic, revealed in the same click as the answer). Live sheet columns N/O; `notes` stays host-only.
   Importer fills them from extra slide text (NOTE_SKIP filters structural labels).
+- Text markup (question/answer/notes/tiebreakers): *italic* (flips), **bold**, ***both***, [red]/[gold]..[/red|/gold|/].
+  build.markup_runs/plain + text(markup=True); video Canvas.rich wraps mixed runs; app md() mirrors the regexes
+  (keep in sync); AI prompts use plain (ai._p). Colours in build.MARK_COLORS. Importer does not capture formatting.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

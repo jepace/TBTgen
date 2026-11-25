@@ -182,6 +182,7 @@ def cat_gens(bank, cid):
 def api_sets():
     bank = get_bank()
     _, by_c = usage_index(bank)
+    labels = cat_labels(bank, by_c)
     nights = defaultdict(list)
     for r in bank["Schedule"]:
         if r.get("set_id") and r.get("date"):
@@ -197,13 +198,14 @@ def api_sets():
             rnd = int(sl["round"] or 1) - 1
             if 0 <= rnd < 3:
                 rounds[rnd].append({
-                    "category_id": cid, "title": cat.get("title", "?"), "type": cat.get("type", ""),
+                    "category_id": cid, "title": labels.get(cid, cat.get("title", "?")), "type": cat.get("type", ""),
                     "bonus": build.is_yes(sl["bonus"]), "questions": len(bank["links"].get(cid, [])),
                     "gens": cat_gens(bank, cid),
                     "last_played": hist[0][0] if hist else "",
                     "played_at": sorted({venue_name(bank, v) for _, v in hist})[:6]})
-        tbs = sorted(bank["tiebreakers"].get(set_id, []), key=lambda t: int(t.get("order") or 0))
+        tbs = build.set_tiebreakers(bank, set_id)
         out.append({"set_id": set_id, "rounds": rounds, "errors": errs, "warnings": warns, "mix": set_mix(bank, set_id),
+                    "tiebreaker_id": bank["set_tiebreaker"].get(set_id, ""),
                     "tiebreakers": [{"question": str(t["question"]), "answer": str(t["answer"])} for t in tbs],
                     "nights": sorted(nights.get(set_id, []), key=lambda n: n["date"]), "video": video_info(set_id)})
     return {"sets": out}
@@ -211,7 +213,8 @@ def api_sets():
 
 def api_questions(q, cat, limit=300, gen="", diff=""):
     bank = get_bank()
-    by_q, _ = usage_index(bank)
+    by_q, by_c = usage_index(bank)
+    labels = cat_labels(bank, by_c)
     cats_of = defaultdict(list)
     for cid, links in bank["links"].items():
         for l in links:
@@ -239,19 +242,52 @@ def api_questions(q, cat, limit=300, gen="", diff=""):
                     "question_note": str(qq.get("question_note") or ""), "answer_note": str(qq.get("answer_note") or ""),
                     "clip_end": str(qq.get("clip_end") or ""), "seconds": str(qq.get("seconds") or ""),
                     "generations": qgens, "difficulty": qdiff if qdiff in build.DIFFS else "",
-                    "categories": [{"id": c, "title": bank["cats"].get(c, {}).get("title", c)} for c in cats_of.get(qid, [])],
+                    "categories": [{"id": c, "title": labels.get(c, c)} for c in cats_of.get(qid, [])],
                     "times": len(hist), "last": hist[0][0] if hist else "",
                     "history": [{"date": d, "venue": venue_name(bank, v)} for d, v in hist[:12]]})
     res.sort(key=lambda r: r["id"])
-    categories = sorted(({"id": c, "title": v.get("title", c), "retired": build.is_yes(v.get("retired"))}
+    categories = sorted(({"id": c, "title": labels.get(c, c), "retired": build.is_yes(v.get("retired"))}
                          for c, v in bank["cats"].items()), key=lambda c: c["title"].lower())
     return {"total": len(bank["qs"]), "matches": len(res), "results": res[:limit], "categories": categories}
+
+
+def cat_labels(bank, by_c=None):
+    """{category_id: label}. Names repeat all the time (Movies, Music), so a shared title gets a date: when it was
+    last played, else the date in its notes (imported categories), else its ID."""
+    if by_c is None:
+        _, by_c = usage_index(bank)
+    count = defaultdict(int)
+    for c in bank["cats"].values():
+        count[str(c.get("title", "")).strip().lower()] += 1
+    out = {}
+    for cid, c in bank["cats"].items():
+        title = str(c.get("title", "")).strip() or cid
+        if count[title.lower()] > 1:
+            hist = sorted(by_c.get(cid, []), reverse=True)
+            m = re.findall(r"\d{4}-\d{2}-\d{2}", str(c.get("notes", "")))
+            when = hist[0][0] if hist else (m[-1] if m else "")
+            title = f"{title} · {when or cid}"
+        out[cid] = title
+    return out
+
+
+def api_tiebreakers():
+    bank = get_bank()
+    used = defaultdict(list)
+    for sid, gid in bank["set_tiebreaker"].items():
+        if gid:
+            used[gid].append(sid)
+    groups = [{"id": gid, "items": [{"order": int(r.get("order") or 0), "question": str(r["question"]),
+                                     "answer": str(r.get("answer", ""))} for r in rows],
+               "sets": sorted(used.get(gid, []))} for gid, rows in bank["tiebreakers"].items()]
+    return {"groups": sorted(groups, key=lambda g: g["id"])}
 
 
 def api_categories():
     bank = get_bank()
     _, by_c = usage_index(bank)
     lookback = int(bank["settings"].get("repeat_lookback_days", 365) or 365)
+    labels = cat_labels(bank, by_c)
     out = []
     for cid, c in bank["cats"].items():
         qs = [{"position": int(l["position"] or 0), "id": l["question_id"],
@@ -263,13 +299,13 @@ def api_categories():
               for l in bank["links"].get(cid, [])]
         hist = sorted(by_c.get(cid, []), reverse=True)
         in_sets = sorted(sid for sid, slots in bank["sets"].items() if any(sl["category_id"] == cid for sl in slots))
-        out.append({"id": cid, "title": str(c.get("title", "")), "blurb": str(c.get("blurb", "")),
+        out.append({"id": cid, "title": str(c.get("title", "")), "label": labels[cid], "blurb": str(c.get("blurb", "")),
                     "type": str(c.get("type", "") or "standard"), "season_tag": str(c.get("season_tag", "")),
                     "retired": build.is_yes(c.get("retired")), "notes": str(c.get("notes", "")),
                     "questions": sorted(qs, key=lambda q: q["position"]), "last_played": hist[0][0] if hist else "",
                     "played_at": sorted({venue_name(bank, v) for _, v in hist})[:8], "times": len({d for d, _ in hist}),
                     "in_sets": in_sets, "gens": cat_gens(bank, cid)})
-    out.sort(key=lambda c: c["title"].lower())
+    out.sort(key=lambda c: c["label"].lower())
     return {"categories": out, "lookback_days": lookback, "today": str(dt.date.today())}
 
 
@@ -502,6 +538,26 @@ def reveal_path(path):
         open_path(Path(path).parent)
 
 
+_LOGO = {}
+
+
+def brand_logo(size=128):
+    """The Trivia By Troy logo, shrunk once for the page header and the browser tab."""
+    if "png" not in _LOGO:
+        try:
+            import io
+            from PIL import Image
+            with Image.open(ASSETS / "brand/tbt_logo.png") as im:
+                im = im.convert("RGBA")
+                im.thumbnail((size, size), Image.LANCZOS)
+                buf = io.BytesIO()
+                im.save(buf, "PNG", optimize=True)
+                _LOGO["png"] = buf.getvalue()
+        except Exception:
+            _LOGO["png"] = None
+    return _LOGO["png"]
+
+
 def safe_under(base, rel):
     p = (base / rel).resolve()
     return p if p.is_file() and base.resolve() in p.parents else None
@@ -596,6 +652,16 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b)
             return
+        if u.path in ("/logo.png", "/favicon.ico"):
+            b = brand_logo()
+            if b:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(b)))
+                self.send_header("Cache-Control", "max-age=86400")
+                self.end_headers()
+                self.wfile.write(b)
+                return
         if u.path == "/favicon.ico":
             self.send_response(204)
             self.send_header("Content-Length", "0")
@@ -614,9 +680,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(api_sets())
             if u.path == "/api/questions":
                 return self.send_json(api_questions(q.get("q", ""), q.get("cat", ""), gen=q.get("gen", ""),
-                                                    diff=q.get("diff", "")))
+                                                    diff=q.get("diff", ""), limit=int(q.get("limit") or 300) or 10**9))
             if u.path == "/api/files":
                 return self.send_json(api_files())
+            if u.path == "/api/tiebreakers":
+                return self.send_json(api_tiebreakers())
             if u.path == "/api/categories":
                 return self.send_json(api_categories())
             if u.path == "/api/ai/status":
@@ -853,7 +921,7 @@ def main():
 
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TBTgen</title>
+<title>TBTgen</title><link rel="icon" type="image/png" href="/logo.png">
 <style>
 :root{--bg:#f6f5f2;--card:#fff;--ink:#1d1d1f;--muted:#6b6b70;--line:#e3e1dc;--accent:#c2185b;--accent-ink:#fff;
 --ok:#1b7f4b;--warn:#a15c00;--bad:#b3261e;--chip:#efede8;--log:#16161a;--logink:#e8e6e3;--gold:#b8860b;--hover:#faf9f6}
@@ -937,12 +1005,16 @@ select.setpick{font-size:13px;padding:3px 6px}
 .dtag.easy{color:var(--ok)}.dtag.medium{color:var(--warn)}.dtag.hard{color:var(--bad)}
 @media (max-width:760px){.f{grid-template-columns:1fr}.f>label{padding-top:0}.sgrid{grid-template-columns:1fr}}
 @media (max-width:760px){.grid3{grid-template-columns:1fr}.hide-sm{display:none}input[type=search]{min-width:0}}
+th[data-sort]{cursor:pointer;user-select:none;white-space:nowrap}th[data-sort]:hover{color:var(--text,#000)}
+th.asc::after{content:" ▲";font-size:.75em}th.desc::after{content:" ▼";font-size:.75em}
+.pager{display:flex;gap:10px;align-items:center;justify-content:center;padding:10px 0 4px}
+.brandlogo{height:44px;width:44px;border-radius:9px;background:#000;margin-right:2px}
 .mk-red{color:#d32f2f}.mk-gold{color:#b8860b}
 .slideprev{background:#000;color:#fff;border-radius:8px;padding:12px 14px;font-family:"Trebuchet MS",sans-serif;line-height:1.3}
 .slideprev .mk-red{color:#e53935}.slideprev .mk-gold{color:#f5c242}.slideprev .pn .mi{font-style:normal}.slideprev .pq{font-weight:bold;white-space:pre-wrap}
 .slideprev .pn{font-style:italic;font-size:.88em;margin-top:2px;white-space:pre-wrap}.slideprev .pa{color:#f5c242;font-weight:bold;font-size:1.2em;margin-top:10px}
 </style></head><body><main>
-<header><h1><b>TBT</b>gen</h1><span class="pill" id="source">…</span><span class="pill busy hidden" id="busy" title="Show progress"></span>
+<header><img class="brandlogo" src="/logo.png" alt="Trivia By Troy"><h1><b>TBT</b>gen</h1><span class="pill" id="source">…</span><span class="pill busy hidden" id="busy" title="Show progress"></span>
 <span class="spacer"></span><button id="reloadData" title="Read the spreadsheet again">Reload data</button>
 <button id="openSheet" class="hidden">Open spreadsheet</button><button id="quit" title="Stop TBTgen">Quit</button></header>
 <nav id="tabs"><a data-tab="nights">Nights</a><a data-tab="sets">Sets</a><a data-tab="categories">Categories</a><a data-tab="questions">Questions</a><a data-tab="venues">Venues</a>
@@ -960,7 +1032,7 @@ select.setpick{font-size:13px;padding:3px 6px}
 <div class="card">
   <div class="row" style="margin-bottom:8px"><strong id="range">Loading…</strong><span class="spacer"></span>
     <button id="all" class="sm">Select all</button><button id="none" class="sm">Select none</button></div>
-  <table><thead><tr><th class="c"></th><th>Day</th><th class="hide-sm">Date</th><th>Venue</th><th>Host</th><th>Set</th></tr></thead>
+  <table><thead><tr><th class="c"></th><th data-tbl="nights" data-sort="date">Day</th><th class="hide-sm" data-tbl="nights" data-sort="date">Date</th><th data-tbl="nights" data-sort="venue">Venue</th><th data-tbl="nights" data-sort="host">Host</th><th data-tbl="nights" data-sort="set">Set</th></tr></thead>
   <tbody id="rows"></tbody></table>
   <div class="row" style="margin-top:14px">
     <button id="check">Check</button><button id="build" class="primary">Build</button>
@@ -974,15 +1046,19 @@ select.setpick{font-size:13px;padding:3px 6px}
 <section data-pane="sets" class="hidden">
 <div class="card"><div class="row"><span class="muted small">Each set is 3 rounds × 3 categories, with one bonus category.</span><span class="spacer"></span>
   <button class="primary" id="newSet">New set</button></div></div>
-<div id="setsList"><div class="empty">Loading…</div></div></section>
+<div class="card"><div class="row"><input type="search" id="sSearch" placeholder="Search sets, categories, nights…">
+  <select id="sSort"><option value="id-desc">Newest set ID first</option><option value="id-asc">Oldest set ID first</option>
+  <option value="night-asc">Next night first</option><option value="night-desc">Latest night first</option><option value="status">Problems first</option></select>
+  <span class="muted small" id="sCount"></span></div></div>
+<div id="setsList"><div class="empty">Loading…</div></div><div id="pg-sets"></div></section>
 
 <!-- ============================== CATEGORIES -->
 <section data-pane="categories" class="hidden">
 <div class="card"><div class="row"><input type="search" id="cSearch" placeholder="Search categories…">
   <label class="row small" style="gap:5px"><input type="checkbox" id="cRetired"> show retired</label>
   <span class="muted small" id="cCount"></span><span class="spacer"></span><button id="ideasBtn">Category ideas with AI…</button><button class="primary" id="newCat">New category</button></div></div>
-<div class="card" style="padding:6px 16px"><table><thead><tr><th>Category</th><th class="hide-sm">Type</th><th>Questions</th>
-  <th class="hide-sm">Last played</th><th class="hide-sm">In sets</th></tr></thead><tbody id="cRows"></tbody></table></div>
+<div class="card" style="padding:6px 16px"><table><thead><tr><th data-tbl="cats" data-sort="label">Category</th><th class="hide-sm" data-tbl="cats" data-sort="type">Type</th><th data-tbl="cats" data-sort="n">Questions</th>
+  <th class="hide-sm" data-tbl="cats" data-sort="last">Last played</th><th class="hide-sm" data-tbl="cats" data-sort="sets">In sets</th></tr></thead><tbody id="cRows"></tbody></table><div id="pg-cats"></div></div>
 </section>
 
 <!-- ============================== QUESTIONS -->
@@ -994,8 +1070,8 @@ select.setpick{font-size:13px;padding:3px 6px}
   <span class="muted small" id="qCount"></span>
   <span class="spacer"></span><button class="primary" id="newQ">New question</button></div>
   <p class="muted small" style="margin:10px 0 0">Click a question for details and Edit. Changes are saved straight to the spreadsheet.</p></div>
-<div class="card" style="padding:6px 16px"><table><thead><tr><th class="hide-sm"></th><th>ID</th><th>Question</th><th>Answer</th>
-  <th class="hide-sm">Categories</th><th class="hide-sm">Asked</th></tr></thead><tbody id="qRows"></tbody></table></div>
+<div class="card" style="padding:6px 16px"><table><thead><tr><th class="hide-sm" data-tbl="q" data-sort="media" title="Sort by picture / clip"></th><th data-tbl="q" data-sort="id">ID</th><th data-tbl="q" data-sort="question">Question</th><th data-tbl="q" data-sort="answer">Answer</th>
+  <th class="hide-sm" data-tbl="q" data-sort="cats">Categories</th><th class="hide-sm" data-tbl="q" data-sort="asked">Asked</th></tr></thead><tbody id="qRows"></tbody></table><div id="pg-q"></div></div>
 </section>
 
 <!-- ============================== VENUES -->
@@ -1005,8 +1081,8 @@ select.setpick{font-size:13px;padding:3px 6px}
   <span class="muted small" id="vnCount"></span><span class="spacer"></span><button class="primary" id="newVenue">New venue</button></div>
   <p class="muted small" style="margin:10px 0 0">The calendar name must match how the venue is written in calendar events (“<i>Calendar name</i> - Host”).
   Venues without a logo use the Trivia By Troy logo.</p></div>
-<div class="card" style="padding:6px 16px"><table><thead><tr><th></th><th>Venue</th><th>Night</th><th class="hide-sm">Calendar name</th>
-  <th class="hide-sm">Region</th><th class="hide-sm">Next night</th></tr></thead><tbody id="vnRows"></tbody></table></div>
+<div class="card" style="padding:6px 16px"><table><thead><tr><th data-tbl="vn" data-sort="logo" title="Sort by logo"></th><th data-tbl="vn" data-sort="name">Venue</th><th data-tbl="vn" data-sort="night">Night</th><th class="hide-sm" data-tbl="vn" data-sort="cal">Calendar name</th>
+  <th class="hide-sm" data-tbl="vn" data-sort="region">Region</th><th class="hide-sm" data-tbl="vn" data-sort="next">Next night</th></tr></thead><tbody id="vnRows"></tbody></table><div id="pg-vn"></div></div>
 </section>
 
 <!-- ============================== IMPORT -->
@@ -1082,8 +1158,8 @@ select.setpick{font-size:13px;padding:3px 6px}
 <div class="card"><div class="row"><div class="seg" id="fKind"><button data-k="" class="on">All</button><button data-k="deck">Decks</button>
   <button data-k="answer key">Answer keys</button><button data-k="video">Videos</button></div><input type="search" id="fSearch" placeholder="Filter by name…">
   <span class="spacer"></span><button id="fOpenFolder">Open folder</button></div></div>
-<div class="card" style="padding:6px 16px"><table><thead><tr><th>Name</th><th class="hide-sm">Kind</th><th class="hide-sm">Size</th><th class="hide-sm">Made</th><th></th></tr></thead>
-  <tbody id="fRows"></tbody></table></div>
+<div class="card" style="padding:6px 16px"><table><thead><tr><th data-tbl="files" data-sort="name">Name</th><th class="hide-sm" data-tbl="files" data-sort="kind">Kind</th><th class="hide-sm" data-tbl="files" data-sort="size">Size</th><th class="hide-sm" data-tbl="files" data-sort="made">Made</th><th></th></tr></thead>
+  <tbody id="fRows"></tbody></table><div id="pg-files"></div></div>
 <div class="card hidden" id="fView"><div class="row" style="margin-bottom:8px"><strong id="fViewTitle"></strong><span class="spacer"></span>
   <button class="sm" id="fViewClose">Close</button></div><pre id="fViewBody" style="max-height:480px"></pre></div>
 </section>
@@ -1108,6 +1184,23 @@ select.setpick{font-size:13px;padding:3px 6px}
 const T="__TOKEN__",$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const S={week:"next",nights:[],dayOn:new Set(DAYS),polling:null,files:[],fKind:"",vHeight:"720",sets:[],qTimer:null,loaded:{}};
+/* ---------- sorting & paging (any table: <th data-tbl="id" data-sort="key">, a #pg-id div for the pager) ---------- */
+const SORT=(()=>{try{return JSON.parse(localStorage.getItem("tbt_sort"))||{}}catch(e){return {}}})(),PAGE={},RENDER={};
+const plainTxt=s=>String(s??"").replace(/\*+|\[\/?(red|gold)?\]/gi,"");
+function sortRows(id,rows,getters,dflt){const st=SORT[id]||dflt;if(!st||!getters[st.key])return rows;const g=getters[st.key];
+  return rows.map((r,i)=>[r,g(r),i]).sort((a,b)=>{const x=a[1],y=b[1];const ex=x===""||x==null,ey=y===""||y==null;if(ex!==ey)return ex?1:-1;
+    const c=(typeof x==="number"&&typeof y==="number")?x-y:String(x).localeCompare(String(y),undefined,{numeric:true,sensitivity:"base"});return c*st.dir||a[2]-b[2]}).map(a=>a[0])}
+function pageRows(id,rows,size){const pages=Math.max(1,Math.ceil(rows.length/size));const pg=Math.min(PAGE[id]||0,pages-1);PAGE[id]=pg;
+  const el=document.getElementById("pg-"+id);
+  if(el)el.innerHTML=pages>1?`<div class="pager"><button class="sm" data-pg="${id}:-1" ${pg?"":"disabled"}>‹ Prev</button><span class="small muted">${pg*size+1}–${Math.min(rows.length,(pg+1)*size)} of ${rows.length}</span><button class="sm" data-pg="${id}:1" ${pg<pages-1?"":"disabled"}>Next ›</button></div>`:"";
+  return rows.slice(pg*size,(pg+1)*size)}
+function markSort(id,dflt){const st=SORT[id]||dflt;document.querySelectorAll(`th[data-tbl="${id}"]`).forEach(th=>{th.classList.remove("asc","desc");
+  if(st&&th.dataset.sort===st.key)th.classList.add(st.dir>0?"asc":"desc")})}
+document.addEventListener("click",e=>{const th=e.target.closest("th[data-sort]");
+  if(th){const id=th.dataset.tbl,k=th.dataset.sort,cur=SORT[id];SORT[id]={key:k,dir:cur&&cur.key===k?-cur.dir:1};PAGE[id]=0;
+    try{localStorage.setItem("tbt_sort",JSON.stringify(SORT))}catch(_){}if(RENDER[id])RENDER[id]();return}
+  const pb=e.target.closest("[data-pg]");if(pb){const [id,d]=pb.dataset.pg.split(":");PAGE[id]=(PAGE[id]||0)+(+d);if(RENDER[id])RENDER[id]();
+    const t=document.getElementById("pg-"+id);const tbl=t&&t.previousElementSibling;if(tbl&&tbl.getBoundingClientRect().top<0)tbl.scrollIntoView({block:"start"})}});
 const store={get(k,d){try{const v=localStorage.getItem("tbt_"+k);return v===null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("tbt_"+k,JSON.stringify(v))}catch(e){}}};
 const get=p=>fetch(p+(p.includes("?")?"&":"?")+"t="+T).then(r=>r.json());
 const post=(p,b)=>fetch(p,{method:"POST",headers:{"Content-Type":"application/json","X-TBTgen-Token":T},body:JSON.stringify(b||{})}).then(r=>r.json());
@@ -1137,7 +1230,8 @@ window.addEventListener("hashchange",()=>{const t=location.hash.slice(1);if(t&&t
 /* ---------- nights ---------- */
 function chips(){$("#days").innerHTML=DAYS.map(d=>`<button class="chip${S.dayOn.has(d)?" on":""}" data-d="${d}">${d}</button>`).join("");
   $$("#days .chip").forEach(b=>b.onclick=()=>{const d=b.dataset.d;S.dayOn.has(d)?S.dayOn.delete(d):S.dayOn.add(d);store.set("days",[...S.dayOn]);chips();renderNights()})}
-function renderNights(){const shown=S.nights.filter(n=>S.dayOn.has(n.day));
+RENDER.nights=()=>renderNights();
+function renderNights(){const shown=sortRows("nights",S.nights.filter(n=>S.dayOn.has(n.day)),{date:n=>n.date,venue:n=>n.venue,host:n=>n.host,set:n=>n.set_id});markSort("nights");
   if(S.rangeTxt)$("#range").textContent=S.rangeTxt+(shown.length<S.nights.length?` · ${shown.length} shown`:"");
   $("#rows").innerHTML=shown.length?shown.map(n=>{const ok=n.status==="ok";
     const tag=n.status==="no_venue"?`<span class="tag bad">venue not on Venues tab</span>`:
@@ -1167,7 +1261,14 @@ $("#openout").onclick=()=>post("/api/open",{folder:true});
 
 /* ---------- sets ---------- */
 async function loadSets(){const r=await get("/api/sets").catch(e=>({error:String(e)}));
-  if(r.error){$("#setsList").innerHTML=`<div class="card note bad">${esc(r.error)}</div>`;return}S.sets=r.sets;
+  if(r.error){$("#setsList").innerHTML=`<div class="card note bad">${esc(r.error)}</div>`;return}S.sets=r.sets;renderSets()}
+RENDER.sets=()=>renderSets();
+function renderSets(){const q=$("#sSearch").value.toLowerCase(),how=$("#sSort").value;store.set("sSort",how);
+  const nextN=s=>(s.nights.find(n=>n.date>=new Date().toISOString().slice(0,10))||s.nights[s.nights.length-1]||{}).date||"";
+  const hay=s=>[s.set_id,s.tiebreaker_id,...s.rounds.flat().map(c=>c.title+" "+c.category_id),...s.nights.map(n=>n.date+" "+n.venue)].join(" ").toLowerCase();
+  const [key,dir]=how==="status"?["status",1]:how.split("-");
+  const list=sortRows("sets",S.sets.filter(s=>hay(s).includes(q)),{id:s=>s.set_id,night:s=>nextN(s),status:s=>s.errors.length?0:s.warnings.length?1:2},{key,dir:dir==="desc"?-1:1});
+  $("#sCount").textContent=`${list.length} set${list.length==1?"":"s"}`;const r={sets:pageRows("sets",list,10)};
   $("#setsList").innerHTML=r.sets.length?r.sets.map(s=>{
     const probs=[...s.errors.map(e=>`<div class="small" style="color:var(--bad)">✗ ${esc(e)}</div>`),...s.warnings.map(w=>`<div class="small" style="color:var(--warn)">! ${esc(w)}</div>`)].join("");
     const rounds=s.rounds.map((cats,i)=>`<div class="rnd"><h4>Round ${i+1}</h4>${cats.map(c=>`<div class="cat"><strong>${esc(c.title)}</strong>
@@ -1175,14 +1276,15 @@ async function loadSets(){const r=await get("/api/sets").catch(e=>({error:String
       ${c.questions!==5?`<span class="tag bad">${c.questions} questions</span>`:""}
       <div class="muted small">${esc(c.category_id)} · ${c.last_played?`last played ${fmtDate(c.last_played)} at ${esc(c.played_at.join(", "))}`:"never played"}</div></div>`).join("")||'<div class="muted small">empty</div>'}</div>`).join("");
     const nights=s.nights.length?s.nights.map(n=>`${fmtDate(n.date)} ${esc(n.venue)}`).join(" · "):"not assigned to any night";
+    const tbInfo=s.tiebreaker_id?`Tiebreakers: <span class="mono">${esc(s.tiebreaker_id)}</span> ${s.tiebreakers.map(t=>esc(plainTxt(t.question)).slice(0,40)).join(" · ")}`:'<span style="color:var(--warn)">No tiebreaker group</span>';
     return `<div class="card"><div class="row" style="margin-bottom:10px"><h2 style="margin:0">${esc(s.set_id)}</h2>
       ${s.errors.length?'<span class="tag bad">problems</span>':s.warnings.length?'<span class="tag warn">warnings</span>':'<span class="tag ok">ready</span>'}
       ${s.video?`<span class="tag">video ${fmtLen(s.video.length_seconds)}</span>`:""}<span class="spacer"></span>
       <button class="sm" data-editset="${esc(s.set_id)}">Edit set</button><button class="sm" data-aiset="${esc(s.set_id)}">Check with AI</button><button class="sm" data-tagset="${esc(s.set_id)}">Tag with AI</button>
       <button class="sm" data-video="${esc(s.set_id)}">${s.video?"Watch / remake video":"Make video"}</button></div>
-      <div class="grid3">${rounds}</div><div class="small muted" style="margin-top:10px">Nights: ${nights}</div>
+      <div class="grid3">${rounds}</div><div class="small muted" style="margin-top:10px">Nights: ${nights}</div><div class="small muted" style="margin-top:4px">${tbInfo}</div>
       <details style="margin-top:8px"><summary class="small">Age &amp; difficulty mix</summary><div style="margin-top:6px">${mixHtml(s.mix)}</div></details>
-      ${probs?`<div style="margin-top:8px">${probs}</div>`:""}</div>`}).join(""):`<div class="card empty">No sets on the Sets tab yet.</div>`;
+      ${probs?`<div style="margin-top:8px">${probs}</div>`:""}</div>`}).join(""):`<div class="card empty">${S.sets.length?"No sets match.":"No sets on the Sets tab yet."}</div>`;
   $$("[data-video]").forEach(b=>b.onclick=()=>{store.set("vSet",b.dataset.video);showTab("video")});
   $$("[data-editset]").forEach(b=>b.onclick=()=>editSet(S.sets.find(x=>x.set_id===b.dataset.editset)));
   $$("[data-aiset]").forEach(b=>b.onclick=()=>aiCheckSet(S.sets.find(x=>x.set_id===b.dataset.aiset)));
@@ -1190,10 +1292,16 @@ async function loadSets(){const r=await get("/api/sets").catch(e=>({error:String
 
 /* ---------- questions ---------- */
 async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$("#qCat").value,gen=$("#qGen").value,diff=$("#qDiff").value;
-  const r=await get(`/api/questions?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(cat)}&gen=${encodeURIComponent(gen)}&diff=${encodeURIComponent(diff)}`).catch(e=>({error:String(e)}));
+  const r=await get(`/api/questions?limit=0&q=${encodeURIComponent(q)}&cat=${encodeURIComponent(cat)}&gen=${encodeURIComponent(gen)}&diff=${encodeURIComponent(diff)}`).catch(e=>({error:String(e)}));
   if(r.error){$("#qRows").innerHTML=`<tr><td colspan="6" class="empty">${esc(r.error)}</td></tr>`;return}
+  S.qR=r;renderQuestions()}
+RENDER.q=()=>renderQuestions();
+function renderQuestions(){const r0=S.qR;if(!r0)return;
+  const all=sortRows("q",r0.results,{id:x=>x.id,question:x=>plainTxt(x.question),answer:x=>plainTxt(x.answer),cats:x=>(x.categories[0]||{}).title||"",
+    asked:x=>x.last||"",media:x=>x.question_image||x.answer_image?0:x.media?1:2});markSort("q");
+  const r={...r0,results:pageRows("q",all,50)};
   if($("#qCat").options.length<=1)$("#qCat").innerHTML='<option value="">All categories</option>'+r.categories.map(c=>`<option value="${esc(c.id)}">${esc(c.title)}${c.retired?" (retired)":""}</option>`).join("");
-  $("#qCount").textContent=r.matches===r.total?`${r.total} questions`:`${r.matches} of ${r.total}`+(r.results.length<r.matches?` (first ${r.results.length} shown)`:"");
+  $("#qCount").textContent=r.matches===r.total?`${r.total} questions`:`${r.matches} of ${r.total}`;
   $("#qRows").innerHTML=r.results.length?r.results.map((x,i)=>{const img=x.question_image||x.answer_image;
     return `<tr class="click${x.retired?" dim":""}" data-i="${i}"><td class="hide-sm">${img?`<img class="thumb" loading="lazy" src="${assetUrl(img)}" alt="">`:x.media?'<span class="tag">'+(/\.(mp3|m4a|wav|aac)$/i.test(x.media)?"♪ audio":"▶ video")+'</span>':""}</td>
       <td class="mono">${esc(x.id)}</td><td>${md(x.question)}${x.retired?' <span class="tag">retired</span>':""}<div class="row" style="gap:4px">${dtag(x.difficulty)}${gchips(x.generations)}</div></td><td><strong>${md(x.answer)}</strong></td>
@@ -1215,7 +1323,8 @@ async function loadQuestions(){S.loaded.q=true;const q=$("#qSearch").value,cat=$
     d.querySelector("[data-editq]").onclick=()=>editQuestion(x,()=>loadQuestions());
     d.querySelector("[data-aiq]").onclick=()=>aiCheck({question_ids:[x.id]},`Check: ${x.id}`,1,()=>loadQuestions());
     tr.after(d)})}
-$("#qSearch").oninput=()=>{clearTimeout(S.qTimer);S.qTimer=setTimeout(loadQuestions,250)};$("#qCat").onchange=loadQuestions;$("#qGen").onchange=loadQuestions;$("#qDiff").onchange=loadQuestions;
+const qFilter=()=>{PAGE.q=0;loadQuestions()};
+$("#qSearch").oninput=()=>{clearTimeout(S.qTimer);S.qTimer=setTimeout(qFilter,250)};$("#qCat").onchange=qFilter;$("#qGen").onchange=qFilter;$("#qDiff").onchange=qFilter;
 
 /* ---------- video ---------- */
 async function loadVideoTab(){const r=await get("/api/sets").catch(e=>({error:String(e)}));if(r.error){$("#vList").textContent=r.error;return}
@@ -1241,7 +1350,10 @@ $("#vBuild").onclick=()=>run({mode:"video",set_id:$("#vSet").value,seconds:+$("#
 
 /* ---------- files ---------- */
 async function loadFiles(){const r=await get("/api/files");S.files=r.files||[];renderFiles()}
-function renderFiles(){const q=$("#fSearch").value.toLowerCase(),fs=S.files.filter(f=>(!S.fKind||f.kind===S.fKind)&&f.name.toLowerCase().includes(q));
+RENDER.files=()=>renderFiles();
+function renderFiles(){const q=$("#fSearch").value.toLowerCase(),dflt={key:"made",dir:-1};
+  const fall=sortRows("files",S.files.filter(f=>(!S.fKind||f.kind===S.fKind)&&f.name.toLowerCase().includes(q)),{name:f=>f.name,kind:f=>f.kind,size:f=>f.size,made:f=>f.modified},dflt);
+  markSort("files",dflt);const fs=pageRows("files",fall,50);
   $("#fRows").innerHTML=fs.length?fs.map(f=>`<tr><td>${esc(f.name)}${f.rel.includes("/")?` <span class="muted small">${esc(f.rel.split("/")[0])}/</span>`:""}</td>
     <td class="hide-sm"><span class="tag">${f.kind}</span></td><td class="hide-sm small">${fmtSize(f.size)}</td><td class="hide-sm small">${esc(f.modified)}</td>
     <td style="text-align:right;white-space:nowrap">${f.kind!=="deck"?`<button class="sm" data-view="${esc(f.rel)}" data-kind="${f.kind}">View</button> `:""}<button class="sm" data-open="${esc(f.rel)}">Open</button>
@@ -1363,10 +1475,11 @@ async function loadCats(){const r=await get("/api/categories").catch(e=>({error:
   if(r.error){$("#cRows").innerHTML=`<tr><td colspan="5" class="empty">${esc(r.error)}</td></tr>`;return}S.cats=r;renderCats()}
 function daysAgo(d){return d?Math.round((Date.parse(S.cats?.today||new Date().toISOString().slice(0,10))-Date.parse(d))/864e5):null}
 function renderCats(){if(!S.cats)return;const q=$("#cSearch").value.toLowerCase(),showR=$("#cRetired").checked;
-  const cs=S.cats.categories.filter(c=>(showR||!c.retired)&&(`${c.id} ${c.title} ${c.blurb} ${c.season_tag}`.toLowerCase().includes(q)));
-  $("#cCount").textContent=`${cs.length} categor${cs.length==1?"y":"ies"}`;
+  const all=sortRows("cats",S.cats.categories.filter(c=>(showR||!c.retired)&&(`${c.id} ${c.label} ${c.blurb} ${c.season_tag}`.toLowerCase().includes(q))),
+    {label:c=>c.label,type:c=>c.type,n:c=>c.questions.length,last:c=>c.last_played,sets:c=>c.in_sets.length});markSort("cats");
+  $("#cCount").textContent=`${all.length} categor${all.length==1?"y":"ies"}`;const cs=pageRows("cats",all,50);
   $("#cRows").innerHTML=cs.length?cs.map(c=>{const n=c.questions.length,ago=daysAgo(c.last_played);
-    return `<tr class="click${c.retired?" dim":""}" data-cid="${esc(c.id)}"><td><strong>${esc(c.title)}</strong> <span class="mono muted">${esc(c.id)}</span>${c.retired?' <span class="tag">retired</span>':""}
+    return `<tr class="click${c.retired?" dim":""}" data-cid="${esc(c.id)}"><td><strong>${esc(c.label)}</strong> <span class="mono muted">${esc(c.id)}</span>${c.retired?' <span class="tag">retired</span>':""}
       <div class="small muted">${esc(c.blurb).slice(0,110)}${c.blurb.length>110?"…":""}</div><div class="row" style="gap:4px">${(()=>{const n=Object.fromEntries(DIFFS.map(x=>[x,c.questions.filter(q=>q.difficulty===x).length]));
         return DIFFS.filter(x=>n[x]).map(x=>`${dtag(x)}<span class="small muted">${n[x]}</span>`).join(" ")})()}${gchips(GENS.filter(g=>c.gens[g]>=3))}</div></td><td class="hide-sm">${c.type!=="standard"?`<span class="tag">${esc(c.type)}</span>`:'<span class="muted small">standard</span>'}${c.season_tag?`<div class="small muted">${esc(c.season_tag)}</div>`:""}</td>
       <td>${n===5?`<span class="tag ok">5</span>`:`<span class="tag ${n?"warn":"bad"}">${n}</span>`}</td>
@@ -1374,7 +1487,7 @@ function renderCats(){if(!S.cats)return;const q=$("#cSearch").value.toLowerCase(
       <td class="hide-sm small" style="white-space:nowrap">${c.in_sets.map(esc).join("<br>")||'<span class="muted">—</span>'}</td></tr>`}).join("")
     :`<tr><td colspan="5" class="empty">No categories match.</td></tr>`;
   $$("#cRows tr.click").forEach(tr=>tr.onclick=()=>editCategory(S.cats.categories.find(c=>c.id===tr.dataset.cid)))}
-$("#cSearch").oninput=renderCats;$("#cRetired").onchange=renderCats;$("#newCat").onclick=()=>editCategory(null);$("#ideasBtn").onclick=aiIdeas;
+RENDER.cats=renderCats;$("#cSearch").oninput=()=>{PAGE.cats=0;renderCats()};$("#cRetired").onchange=renderCats;$("#newCat").onclick=()=>editCategory(null);$("#ideasBtn").onclick=aiIdeas;
 async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!c.id;let slots=c.questions.map(q=>({id:q.id,question:q.question,answer:q.answer,generations:q.generations||[],difficulty:q.difficulty||""}));
   const d=dialog(1,isNew?"New category":`Edit ${c.title} (${c.id})`,`<div class="f">
     <label>Title</label><div><input type="text" data-f="title" value="${esc(c.title)}" placeholder="e.g. Turkey"></div>
@@ -1425,51 +1538,83 @@ function nextSetId(){const ids=(S.sets||[]).map(s=>s.set_id);const now=new Date(
   const y=d.getUTCFullYear(),w=Math.ceil(((d-Date.UTC(y,0,1))/864e5+1)/7);
   for(const L of "ABCDEFGH"){const id=`${y}-W${String(w).padStart(2,"0")}-${L}`;if(!ids.includes(id))return id}return ""}
 $("#newSet").onclick=()=>editSet(null);
+$("#sSort").value=store.get("sSort","id-desc");$("#sSearch").oninput=()=>{PAGE.sets=0;renderSets()};$("#sSort").onchange=()=>{PAGE.sets=0;renderSets()};
 async function editSet(set){const isNew=!set;const cr=await get("/api/categories");const cats=cr.categories,look=cr.lookback_days;S.cats=cr;
   const cur=Array.from({length:9},(_,i)=>{const c=set&&set.rounds[Math.floor(i/3)][i%3];return c?{id:c.category_id,bonus:c.bonus}:{id:"",bonus:false}});
-  const tbs=Array.from({length:3},(_,i)=>(set&&set.tiebreakers[i])||{question:"",answer:""});
-  const opts=sel=>`<option value="">— pick a category —</option>`+cats.filter(c=>!c.retired||c.id===sel).map(c=>{const ago=daysAgo(c.last_played);
-    return `<option value="${esc(c.id)}"${c.id===sel?" selected":""}>${esc(c.title)}${c.questions.length!==5?` (${c.questions.length}q)`:""}${c.type!=="standard"?` · ${c.type}`:""}${ago!==null?` · ${ago}d ago`:""}</option>`}).join("");
+  const tr=await get("/api/tiebreakers").catch(()=>({groups:[]}));let groups=tr.groups||[],tbSel=set?set.tiebreaker_id||"":"";
+  // a category already used in another slot isn't offered again
+  const opts=(sel,taken)=>`<option value="">— pick a category —</option>`+cats.filter(c=>(!c.retired||c.id===sel)&&(c.id===sel||!taken.has(c.id))).map(c=>{const ago=daysAgo(c.last_played);
+    return `<option value="${esc(c.id)}"${c.id===sel?" selected":""}>${esc(c.label)}${c.questions.length!==5?` (${c.questions.length}q)`:""}${c.type!=="standard"?` · ${c.type}`:""}${ago!==null?` · ${ago}d ago`:""}</option>`}).join("");
+  const tbLabel=g=>`${g.id}: ${g.items.map(t=>plainTxt(t.question).replace(/^what year (did|was|were)\s*/i,"")).join(" · ").slice(0,90)}${g.sets.length?` (used in ${g.sets.length} set${g.sets.length>1?"s":""})`:""}`;
   const d=dialog(1,isNew?"New set":`Edit set ${set.set_id}`,`<div class="f" style="margin-bottom:12px"><label>Set ID</label><div>
       <input type="text" id="setId" value="${esc(isNew?nextSetId():set.set_id)}" ${isNew?"":"readonly"}><div class="hint">${isNew?"Usually year-week-letter, e.g. 2026-W49-A":"Set IDs can't be changed (nights and history refer to them)"}</div></div></div>
     <div class="sgrid">${[0,1,2].map(r=>`<div class="rnd"><h4>Round ${r+1}</h4>${[0,1,2].map(sl=>{const i=r*3+sl;return `<div class="small muted">Questions ${sl*5+1}–${sl*5+5}</div>
-      <select data-slot="${i}">${opts(cur[i].id)}</select><label class="b"><input type="radio" name="bonus" value="${i}" ${cur[i].bonus?"checked":""}> bonus (double points)</label>`}).join("")}</div>`).join("")}</div>
+      <select data-slot="${i}">${opts(cur[i].id,new Set(cur.filter((x,j)=>j!==i).map(x=>x.id)))}</select><label class="b"><input type="radio" name="bonus" value="${i}" ${cur[i].bonus?"checked":""}> bonus (double points)</label>`}).join("")}</div>`).join("")}</div>
     <div class="warnlist" id="setWarn" style="margin-top:10px"></div><div id="setMix" style="margin-top:10px"></div>
-    <h4 style="margin:14px 0 6px">Tiebreakers <span class="muted small" style="font-weight:400">(year questions: closest total wins)</span></h4>
-    ${tbs.map((t,i)=>`<div class="pickrow" style="margin-bottom:6px"><input type="text" data-tbq="${i}" value="${esc(t.question)}" placeholder="Tiebreaker ${i+1} question"><input type="text" data-tba="${i}" value="${esc(t.answer)}" placeholder="answer" style="max-width:110px;flex:0 0 110px"></div>`).join("")}`,
+    <h4 style="margin:14px 0 6px">Tiebreakers <span class="muted small" style="font-weight:400">(a group of year questions: closest total wins)</span></h4>
+    <div class="pickrow"><select id="tbPick" style="flex:1;min-width:0;width:100%;text-overflow:ellipsis"></select><button class="sm" id="tbEdit">Edit group</button><button class="sm" id="tbNew">New group</button></div>
+    <div id="tbShow" class="small" style="margin-top:6px"></div>`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Create set":"Save set","primary",async dd=>{
       const id=dd.querySelector("#setId").value.trim();if(!id){toast("Give the set an ID",true);return}
       if(isNew&&(S.sets||[]).some(s=>s.set_id===id)){toast(`There's already a set called ${id}`,true);return}
       const picks=[...dd.querySelectorAll("[data-slot]")].map(s=>s.value),b=dd.querySelector("input[name=bonus]:checked");
       if(picks.some(p=>!p)&&!confirm("Some slots are empty. Save anyway?"))return;
-      const rows=picks.map((cid,i)=>({round:Math.floor(i/3)+1,slot:i%3+1,category_id:cid,bonus:b&&+b.value===i?"Y":""})).filter(r=>r.category_id);
+      const rows=picks.map((cid,i)=>({round:Math.floor(i/3)+1,slot:i%3+1,category_id:cid,bonus:b&&+b.value===i?"Y":"",tiebreaker_id:tbSel})).filter(r=>r.category_id);
       if(!await edit({op:"replace",tab:"Sets",match:{set_id:id},rows}))return;
-      const tb=[0,1,2].map(i=>({order:i+1,question:dd.querySelector(`[data-tbq="${i}"]`).value.trim(),answer:dd.querySelector(`[data-tba="${i}"]`).value.trim()})).filter(t=>t.question);
-      if(!await edit({op:"replace",tab:"Tiebreakers",match:{set_id:id},rows:tb}))return;
       toast(isNew?`Created set ${id}`:`Saved set ${id}`);dd.close();loadSets()}]]);
   const warn=()=>{const picks=[...d.querySelectorAll("[data-slot]")].map(s=>s.value),w=[];const seen={};
     picks.forEach((cid,i)=>{if(!cid)return;const c=cats.find(x=>x.id===cid);const where=`Round ${Math.floor(i/3)+1}`;
-      if(seen[cid])w.push(["bad",`${c.title} is picked twice`]);seen[cid]=1;
-      if(c.questions.length!==5)w.push(["bad",`${c.title} has ${c.questions.length} questions (needs 5)`]);
-      const ago=daysAgo(c.last_played);if(ago!==null&&ago<=look)w.push(["warn",`${c.title} (${where}) was played ${ago} days ago at ${c.played_at.join(", ")}`]);
-      if(c.questions.some(q=>q.retired))w.push(["bad",`${c.title} contains a retired question`])});
-    const qs={};picks.forEach(cid=>{const c=cats.find(x=>x.id===cid);if(c)c.questions.forEach(q=>{if(qs[q.id]&&qs[q.id]!==c.title)w.push(["bad",`Question ${q.id} is in both ${qs[q.id]} and ${c.title}`]);qs[q.id]=c.title})});
+      if(seen[cid])w.push(["bad",`${c.label} is picked twice`]);seen[cid]=1;
+      if(c.questions.length!==5)w.push(["bad",`${c.label} has ${c.questions.length} questions (needs 5)`]);
+      const ago=daysAgo(c.last_played);if(ago!==null&&ago<=look)w.push(["warn",`${c.label} (${where}) was played ${ago} days ago at ${c.played_at.join(", ")}`]);
+      if(c.questions.some(q=>q.retired))w.push(["bad",`${c.label} contains a retired question`])});
+    const qs={};picks.forEach(cid=>{const c=cats.find(x=>x.id===cid);if(c)c.questions.forEach(q=>{if(qs[q.id]&&qs[q.id]!==c.label)w.push(["bad",`Question ${q.id} is in both ${qs[q.id]} and ${c.label}`]);qs[q.id]=c.label})});
+    if(!tbSel)w.push(["warn","No tiebreaker group picked"]);
     if(!d.querySelector("input[name=bonus]:checked"))w.push(["warn","No bonus category picked"]);
     const mix={counts:Object.fromEntries(GENS.map(g=>[g,0])),tagged:0,total:0,diff:Object.fromEntries(DIFFS.map(x=>[x,0]))};
     picks.forEach(cid=>{const c=cats.find(x=>x.id===cid);if(c)c.questions.forEach(q=>{mix.total++;if(q.generations&&q.generations.length){mix.tagged++;q.generations.forEach(g=>mix.counts[g]++)}
       if(mix.diff[q.difficulty]!==undefined)mix.diff[q.difficulty]++})});
     d.querySelector("#setMix").innerHTML=mix.total?`<h4 style="margin:0 0 6px">Age &amp; difficulty mix</h4>${mixHtml(mix)}`:"";
     d.querySelector("#setWarn").innerHTML=w.length?w.map(([k,t])=>`<div style="color:var(--${k})">${k==="bad"?"✗":"!"} ${esc(t)}</div>`).join(""):'<div style="color:var(--ok)">✓ Looks good</div>'};
-  d.querySelectorAll("[data-slot],input[name=bonus]").forEach(x=>x.onchange=warn);warn()}
+  // re-offer categories whenever a slot changes, so each category can only be picked once
+  const refreshSlots=()=>{const sels=[...d.querySelectorAll("[data-slot]")];
+    sels.forEach(sl=>{const v=sl.value,taken=new Set(sels.filter(o=>o!==sl).map(o=>o.value).filter(Boolean));sl.innerHTML=opts(v,taken);sl.value=v})};
+  const drawTb=()=>{d.querySelector("#tbPick").innerHTML=`<option value="">— pick a tiebreaker group —</option>`+groups.map(g=>`<option value="${esc(g.id)}"${g.id===tbSel?" selected":""}>${esc(tbLabel(g))}</option>`).join("");
+    const g=groups.find(x=>x.id===tbSel);d.querySelector("#tbEdit").disabled=!g;
+    d.querySelector("#tbShow").innerHTML=g?g.items.map((t,i)=>`<div>${i+1}. ${md(t.question)} <strong>${md(t.answer)}</strong></div>`).join(""):'<span class="muted">No group picked.</span>';warn()};
+  d.querySelector("#tbPick").onchange=e=>{tbSel=e.target.value;drawTb()};
+  const afterTb=async id=>{const r2=await get("/api/tiebreakers");groups=r2.groups||[];tbSel=id;drawTb()};
+  d.querySelector("#tbEdit").onclick=()=>editTiebreakers(groups.find(x=>x.id===tbSel),groups,afterTb);
+  d.querySelector("#tbNew").onclick=()=>editTiebreakers(null,groups,afterTb);
+  d.querySelectorAll("[data-slot]").forEach(x=>x.onchange=()=>{refreshSlots();warn()});d.querySelectorAll("input[name=bonus]").forEach(x=>x.onchange=warn);drawTb()}
+
+/* tiebreaker groups: like a category's questions, a set picks one group */
+function editTiebreakers(g,groups,after){const isNew=!g;
+  const nextId=()=>{const n=Math.max(0,...groups.map(x=>+(/^T(\d+)$/.exec(x.id)||[0,0])[1]));return "T"+String(n+1).padStart(3,"0")};
+  const id=isNew?nextId():g.id;let items=isNew?[{question:"",answer:""},{question:"",answer:""},{question:"",answer:""}]:g.items.map(t=>({...t}));
+  const draw=dd=>{dd.querySelector("#tbRows").innerHTML=items.map((t,i)=>`<div class="pickrow" style="margin-bottom:6px"><input type="text" data-tbq="${i}" value="${esc(t.question)}" placeholder="Tiebreaker ${i+1}: What year…">
+    <input type="text" data-tba="${i}" value="${esc(t.answer)}" placeholder="year" style="max-width:100px;flex:0 0 100px"></div>`).join("")};
+  const grab=dd=>items.map((t,i)=>({question:val(dd,`[data-tbq="${i}"]`),answer:val(dd,`[data-tba="${i}"]`)}));
+  const d=dialog(2,isNew?`New tiebreaker group ${id}`:`Edit tiebreaker group ${id}`,`<p class="muted small" style="margin-top:0">Teams answer each with a year; the host adds up how far off each team is, lowest total wins.
+    ${g&&g.sets.length?`<br>Used in: ${g.sets.map(esc).join(", ")} (changes apply to all of them)`:""}</p><div id="tbRows"></div><button class="sm" id="tbAdd">Add another</button>`,
+    [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Create group":"Save group","primary",async dd=>{items=grab(dd);
+      const rows=items.filter(t=>t.question).map((t,i)=>({order:i+1,question:t.question,answer:t.answer}));
+      if(!rows.length){toast("Add at least one question",true);return}
+      if(rows.some(r=>!r.answer)&&!confirm("Some questions have no answer. Save anyway?"))return;
+      if(!await edit({op:"replace",tab:"Tiebreakers",match:{tiebreaker_id:id},rows}))return;
+      toast(`Saved tiebreaker group ${id}`);dd.close();if(after)after(id)}]]);
+  draw(d);d.querySelector("#tbAdd").onclick=()=>{items=grab(d);items.push({question:"",answer:""});draw(d)}}
 
 $("#newQ").onclick=()=>editQuestion(null,()=>loadQuestions());
 
 /* venues */
 async function loadVenues(){const r=await get("/api/venues").catch(e=>({error:String(e)}));
   if(r.error){$("#vnRows").innerHTML=`<tr><td colspan="6" class="empty">${esc(r.error)}</td></tr>`;return}S.venues=r.venues;renderVenues()}
+RENDER.vn=()=>renderVenues();
 function renderVenues(){const q=$("#vnSearch").value.toLowerCase(),all=$("#vnInactive").checked;
-  const vs=(S.venues||[]).filter(v=>(all||v.active)&&`${v.venue_id} ${v.name} ${v.calendar_name} ${v.region}`.toLowerCase().includes(q));
-  $("#vnCount").textContent=`${vs.length} venue${vs.length==1?"":"s"}`;
+  const vall=sortRows("vn",(S.venues||[]).filter(v=>(all||v.active)&&`${v.venue_id} ${v.name} ${v.calendar_name} ${v.region}`.toLowerCase().includes(q)),
+    {logo:v=>v.logo_ok?0:1,name:v=>v.name,night:v=>v.night,cal:v=>v.calendar_name,region:v=>v.region,next:v=>v.next_night});markSort("vn");
+  $("#vnCount").textContent=`${vall.length} venue${vall.length==1?"":"s"}`;const vs=pageRows("vn",vall,50);
   $("#vnRows").innerHTML=vs.length?vs.map(v=>`<tr class="click${v.active?"":" dim"}" data-vid="${esc(v.venue_id)}">
     <td style="width:70px">${v.logo_ok?`<img class="thumb" style="width:56px;height:56px;object-fit:contain;background:#000" src="${assetUrl(v.logo)}" alt="">`:'<span class="tag warn">no logo</span>'}</td>
     <td><strong>${esc(v.name)}</strong> <span class="mono muted">${esc(v.venue_id)}</span>${v.active?"":' <span class="tag">inactive</span>'}

@@ -136,6 +136,18 @@ def parse_deck(path, venues=()):
             continue
         if qhead:
             num = int(qhead.group(1))
+            # each text box -> its main text; styled subtext (italic/smaller, e.g. "One Point Each!") kept aside
+            split = {t.strip(): p for t, p in zip(s.texts, s.parts or [])}
+            subs, orig = {}, {}
+            mains = []
+            for t in texts:
+                main, sub = split.get(t, (t, ""))
+                main = main or t
+                mains.append(main)
+                orig[main] = t
+                if sub:
+                    subs[main] = sub
+            texts = mains
             rest = [t for t in texts if not RE_QUESTION.match(t.replace("\n", " ").strip())]
             body = [t for t in rest if not LABELS.match(t.replace("\n", " ").strip())]
             key = (rnd + implicit, num)
@@ -146,7 +158,8 @@ def parse_deck(path, venues=()):
             if prev is None:
                 counts["question"] += 1
                 question = max(body, key=len, default="")
-                extra_q = [t for t in rest if t != question and not NOTE_SKIP.match(t.replace("\n", " ").strip())]
+                extra_q = ([subs[question]] if question in subs else []) + \
+                    [t for t in rest if t != question and not NOTE_SKIP.match(t.replace("\n", " ").strip())]
                 q = {"number": num, "round": key[0], "slide": s.number, "question": question, "answer": "",
                      "question_note": "\n".join(extra_q), "answer_note": "",
                      "question_image": imgs[0] if imgs else None, "answer_image": None,
@@ -164,11 +177,13 @@ def parse_deck(path, venues=()):
                 extra = [b for b in body if not similar(b, prev["question"])]
                 if extra:
                     prev["answer"] = min(extra, key=len) if len(extra) > 1 and all(len(e) < 80 for e in extra) else extra[0]
+                    prev["answer"] = orig.get(prev["answer"], prev["answer"])  # an answer box is kept whole: "Title (1987)"
                     prev["answer_slide"] = s.number
                 # any other text on the answer slide (scoring notes, fun facts) that wasn't on the question slide
                 qtexts = [prev["question"], prev.get("question_note", "")]
                 others = [t for t in rest if t != prev["answer"] and not any(similar(t, x) for x in qtexts if x)
                           and not NOTE_SKIP.match(t.replace("\n", " ").strip())]
+                others = [orig.get(t, t) for t in others if orig.get(t, t) != prev["answer"]]
                 if others:
                     prev["answer_note"] = "\n".join(others)
                 qnames = {prev["question_image"].name} if prev["question_image"] else set()

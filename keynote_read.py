@@ -13,6 +13,7 @@ import io
 import os
 import posixpath
 import re
+import struct
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -34,6 +35,9 @@ class MediaRef:
 class Slide:
     number: int
     texts: list = field(default_factory=list)
+    # parts[i] = (main, sub) for texts[i]: "sub" is the text styled as subtext (italic or smaller than the rest of
+    # the box), e.g. "One Point Each!" after a question; main is everything else. sub is "" when there's none.
+    parts: list = field(default_factory=list)
     images: list = field(default_factory=list)
     media: list = field(default_factory=list)
 
@@ -196,6 +200,83 @@ class _Package:
 SKIP_IMAGES = re.compile(r"(^|/)(st-|mt-|PresetImageFill|bullet_)|-small-|-small\.", re.I)
 
 
+def split_sub(chars):
+    """chars: [(ch, italic|None, size|None)] for one text box -> (main, sub). Subtext = the text at the end of the box
+    that is italic (where the box isn't all italic) or noticeably smaller than the box's largest text."""
+    sizes = [z for _, _, z in chars if z]
+    big = max(sizes) if sizes else None
+    all_italic = all(it for ch, it, _z in chars if not ch.isspace()) if chars else False
+    flags = [(bool(it) and not all_italic) or bool(z and big and z < big * 0.9) for ch, it, z in chars]
+    # only a trailing run counts ("Who performs it?  One Point Each!"); an italic word mid-question is emphasis
+    last_main = max((i for i, (c, f) in enumerate(zip(chars, flags)) if not f and not c[0].isspace()), default=-1)
+    main = [c[0] for c in chars[:last_main + 1]]
+    sub = [c[0] for c in chars[last_main + 1:]]
+    if not any(ch.isalnum() for ch in sub):
+        main, sub = [c[0] for c in chars], []
+
+    def tidy(cs):
+        t = "".join(cs).replace("\ufffc", "").replace("\u2028", "\n")
+        t = re.sub(r"[ \t]{2,}", "  ", t)
+        return re.sub(r"\n{3,}", "\n\n", t).strip()
+    m, s = tidy(main), tidy(sub)
+    return (m, s) if m else (tidy(main + sub), "")
+
+
+def _style_props(objs, ref_payload):
+    """(italic, size) from a Keynote paragraph/character style (CharacterStylePropertiesArchive: 2 italic, 3 size)."""
+    try:
+        oid = _fields(ref_payload)[0][2]
+        t, payload = objs[oid]
+        props = next((v for f, w, v in _fields(payload) if f == 11 and w == 2), b"")
+        italic = size = None
+        for f, w, v in _fields(props):
+            if f == 2 and w == 0:
+                italic = bool(v)
+            elif f == 3 and w == 5:
+                size = struct.unpack("<f", v)[0]
+        return italic, size
+    except Exception:
+        return None, None
+
+
+def _storage_parts(objs, payload, text):
+    """Splits a Keynote text storage into (main, sub) using its paragraph (field 5) and character (field 8) styles."""
+    try:
+        fs = _fields(payload)
+    except Exception:
+        return text, ""
+
+    def table(field_no):
+        out = []
+        for f, w, v in fs:
+            if f == field_no and w == 2:
+                for ef, ew, ev in _fields(v):
+                    if ef == 1 and ew == 2:
+                        e = _fields(ev)
+                        idx = next((x for a, b, x in e if a == 1 and b == 0), 0)
+                        ref = next((x for a, b, x in e if a == 2 and b == 2), None)
+                        out.append((idx, _style_props(objs, ref) if ref else (None, None)))
+        return sorted(out, key=lambda x: x[0])
+    paras, chars_t = table(5), table(8)
+    if not paras and not chars_t:
+        return text, ""
+
+    def at(tab, i):
+        cur = (None, None)
+        for idx, props in tab:
+            if idx > i:
+                break
+            cur = props
+        return cur
+    chars, u16 = [], 0
+    for ch in text:
+        p_it, p_sz = at(paras, u16)
+        c_it, c_sz = at(chars_t, u16)
+        chars.append((ch, c_it if c_it is not None else p_it, c_sz or p_sz))
+        u16 += 2 if ord(ch) > 0xFFFF else 1
+    return split_sub(chars)
+
+
 def _read_iwa_deck(pkg):
     objs = {}
     for _, data in pkg.iwa_files():
@@ -257,11 +338,13 @@ def _read_iwa_deck(pkg):
             if t == 2001:  # text storage
                 try:
                     txt = "".join(v.decode("utf8") for f, w, v in _fields(payload) if f == 3 and w == 2)
+                    raw_txt = txt
                 except (ValueError, UnicodeDecodeError, IndexError):
-                    txt = ""
+                    txt = raw_txt = ""
                 txt = txt.replace("￼", "").replace(" ", "\n").strip()
                 if txt:
                     s.texts.append(txt)
+                    s.parts.append(_storage_parts(objs, payload, raw_txt))
                 continue
             if t is not None and 3000 <= t < 3100 and t not in (3006, 3016):  # drawables: images, movies, audio
                 for v in varints(payload):
@@ -367,12 +450,28 @@ def read_pptx(path):
             if tag == "sp":
                 body = el.find("p:txBody", ns)
                 if body is not None:
-                    paras = ["".join("\v" if etree.QName(n).localname == "br" else (n.text or "")
-                                     for n in p.iter(f"{{{ns['a']}}}t", f"{{{ns['a']}}}br"))
-                             for p in body.iterfind("a:p", ns)]
+                    paras, chars = [], []
+                    for p in body.iterfind("a:p", ns):
+                        if paras:
+                            chars.append(("\n", None, None))
+                        line = []
+                        for n in p:
+                            kind = etree.QName(n).localname
+                            if kind == "br":
+                                line.append("\v")
+                                chars.append(("\n", None, None))
+                            elif kind in ("r", "fld"):
+                                rpr = n.find("a:rPr", ns)
+                                it = rpr.get("i") in ("1", "true") if rpr is not None and rpr.get("i") else None
+                                sz = int(rpr.get("sz")) / 100 if rpr is not None and rpr.get("sz") else None
+                                tx = "".join(x.text or "" for x in n.iterfind("a:t", ns))
+                                line.append(tx)
+                                chars += [(c, it, sz) for c in tx]
+                        paras.append("".join(line))
                     t = "\n".join(paras).strip()
                     if t:
                         s.texts.append(t)
+                        s.parts.append(split_sub(chars))
             media_rid = None
             for node in el.iter():
                 if isinstance(node.tag, str) and etree.QName(node).localname in ("media", "videoFile", "audioFile"):

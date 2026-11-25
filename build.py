@@ -187,11 +187,25 @@ def load_bank(tables):
     for r in bank["Sets"]:
         sets[r["set_id"]].append(r)
     bank["sets"] = sets
+    # Tiebreakers come in groups (tiebreaker_id, e.g. T001); each set names its group in the Sets tab's
+    # tiebreaker_id column. Older sheets keyed tiebreakers by set_id: those still work (group = set_id).
     tb = defaultdict(list)
     for r in bank["Tiebreakers"]:
-        tb[r["set_id"]].append(r)
+        gid = str(r.get("tiebreaker_id") or r.get("set_id") or "").strip()
+        if gid and str(r.get("question") or "").strip():
+            tb[gid].append(r)
+    for v in tb.values():
+        v.sort(key=lambda r: int(r.get("order") or 0))
     bank["tiebreakers"] = tb
+    bank["set_tiebreaker"] = {sid: next((str(r.get("tiebreaker_id")).strip() for r in rows
+                                         if str(r.get("tiebreaker_id") or "").strip()), sid if sid in tb else "")
+                              for sid, rows in sets.items()}
     return bank
+
+
+def set_tiebreakers(bank, set_id):
+    """The tiebreaker questions a set uses (its group's rows, in order)."""
+    return bank["tiebreakers"].get(bank["set_tiebreaker"].get(set_id, ""), [])
 
 
 def cat_questions(bank, cid):
@@ -282,8 +296,11 @@ def check_sets(bank, set_ids):
                 for col in ("question_image", "answer_image", "media"):
                     if qq[col] and asset_problem(qq[col]):
                         errs.append(f"Question {qid}: {asset_problem(qq[col])}")
-        if not bank["tiebreakers"].get(set_id):
-            warns.append(f"Set {set_id}: no tiebreaker questions")
+        gid = bank["set_tiebreaker"].get(set_id, "")
+        if not gid:
+            warns.append(f"Set {set_id}: no tiebreaker group picked")
+        elif not bank["tiebreakers"].get(gid):
+            warns.append(f"Set {set_id}: tiebreaker group {gid} has no questions")
     return errs, warns
 
 
@@ -952,7 +969,7 @@ def build_deck(bank, row, outdir):
         else:
             slide_results(deck, venue, "Final Standings")
 
-    tbs = bank["tiebreakers"].get(set_id, [])
+    tbs = set_tiebreakers(bank, set_id)
     if tbs:
         slide_tiebreaker(deck, venue, tbs, with_answers=False)
         slide_tiebreaker(deck, venue, tbs, with_answers=True)

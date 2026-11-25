@@ -83,4 +83,14 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - Paths: sheet file cells go through build.asset()/asset_problem() (must resolve inside assets/, else check() errors);
   output names through build.safe_name() (deck stem from venue+host, video from set_id); app import runs via
   import_dir() (strict name regex). All subprocess calls use arg lists (no shell). review.xlsx "=" cells forced text.
+- Tiebreakers are groups: Tiebreakers.tiebreaker_id (T###) rows; Sets.tiebreaker_id (written on every row of the set)
+  picks one. load_bank: bank["tiebreakers"][gid], bank["set_tiebreaker"][set_id]; legacy set_id-keyed rows still work.
+  App: /api/tiebreakers, editTiebreakers() (dialog 2, next T### client-side). Live sheet migrated (Sets F, Tiebreakers A).
+- App tables: generic sortRows/pageRows/markSort + RENDER[id] (th data-tbl/data-sort, #pg-id pager, sort saved in
+  localStorage). Questions fetched with limit=0 and paged client-side (50); Sets cards paged 10 with search/sort.
+  cat_labels(): shared category titles get " · date" (last played, else date in notes, else ID); used in all pickers.
+  Set editor hides categories picked in other slots. Header/favicon: /logo.png (brand_logo(), 128 px, no token).
+- Importer subtext: keynote_read gives Slide.parts[(main, sub)] per text box from styles (Keynote storage field 5 para
+  / field 8 char style tables; CharacterStyleProperties 2=italic 3=size; pptx a:rPr i/sz). Only a TRAILING italic/
+  smaller run is sub (mid-sentence emphasis stays). Question box sub -> question_note; answer boxes kept whole.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

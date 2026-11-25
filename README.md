@@ -63,7 +63,9 @@ downloaded .command file: right-click it → Open → Open.
 - **Settings**: the Settings tab with plain-English labels and range checks, and the AI assistant setup.
 - **Status**: setup checks, a spreadsheet connection test, counts, the fonts videos use, AI spend.
 
-Edits are saved straight to the spreadsheet. Uploaded pictures/clips go into this computer's `assets/` folder
+Every table sorts by any column (click the header; again to reverse) and long lists are paged; Sets have
+search and sort too. Categories that share a name (Movies, Music…) show a date (last played, else imported) to
+tell them apart. Edits are saved straight to the spreadsheet. Uploaded pictures/clips go into this computer's `assets/` folder
 (copy them to the Drive folder so other computers have them). Data is cached until you click **Reload data**.
 
 ## The spreadsheet
@@ -76,8 +78,8 @@ New rows get IDs automatically (Google Sheets: as you type; .xlsx: on every buil
 | **Questions** | question, answer, question_image, answer_image, media, clip_start/clip_end (seconds), seconds (timer override), retired, notes (host only), generations, difficulty, question_note, answer_note |
 | **Categories** | title, blurb (intro slide), type `standard`/`music`/`movie`, season_tag, retired, notes |
 | **CategoryQuestions** | category_id, position 1–5, question_id. A question can be in any number of categories |
-| **Sets** | set_id, round 1–3, slot 1–3, category_id, bonus (exactly one `Y`) |
-| **Tiebreakers** | set_id, order, question, answer |
+| **Sets** | set_id, round 1–3, slot 1–3, category_id, bonus (exactly one `Y`), tiebreaker_id (the set's tiebreaker group) |
+| **Tiebreakers** | tiebreaker_id (a group, e.g. `T001`), order, question, answer. A set picks one group; a group can be reused |
 | **Venues** | venue_id, name, logo, region, night, upcoming_nights, active, calendar_name (as written in calendar events), audience |
 | **Schedule** | date, venue_id, set_id, host, calendar_event. Nights without a set are skipped |
 | **Usage** | which venue heard which question, in which category, when (written by "Log as played" / `--record`) |
@@ -134,7 +136,8 @@ Song/movie clips and web photos may be copyrighted: fine for private use, risky 
 `python3 import_decks.py FOLDER [--pictures] [--clips]` or the app's **Import** tab ("Choose folder…" on a Mac).
 Reads Keynote (.key, folder or single-file; Keynote 6+ fully, '09-era best effort) and PowerPoint (.pptx) decks
 directly, with no Keynote needed. "Questions 1 - 5" intros give the categories, "Question N" slides the questions
-(+ picture/clip and any extra text as question_note), answer slides the answers (+ answer_note, answer pictures).
+(+ picture/clip; subtext styled italic or smaller at the end of the question, like "One Point Each!", and any
+extra text become question_note), answer slides the answers (+ answer_note, answer pictures).
 Repeats across decks are merged, with every appearance (deck, date from the file name, venue) kept.
 - Decks are read where they are (nothing is copied or uploaded); only the slide text and layout are read, so even
   huge decks use little memory. Decks in iCloud Drive or Google Drive that are "cloud only" get downloaded in

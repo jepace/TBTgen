@@ -238,14 +238,18 @@ sheet("CategoryQuestions", ["category_id", "position", "question_id"], links, [1
 S = "2026-W48-A"
 order = [("turkey", ""), ("tg_potluck", ""), ("tg_mishaps", ""), ("nov_bdays", ""), ("nov_pop", ""),
          ("music_tg", "Y"), ("holiday_travel", ""), ("potluck_1", ""), ("movies_tg", "")]
-sheet("Sets", ["set_id", "round", "slot", "category_id", "bonus"],
-      [(S, i // 3 + 1, i % 3 + 1, CID[slug], b) for i, (slug, b) in enumerate(order)],
-      [12, 7, 6, 12, 7, 34], auto=[("(auto) category", lookup("D", "Categories", "B"))])
+sheet("Sets", ["set_id", "round", "slot", "category_id", "bonus", "tiebreaker_id"],
+      [(S, i // 3 + 1, i % 3 + 1, CID[slug], b, "T001") for i, (slug, b) in enumerate(order)],
+      [12, 7, 6, 12, 7, 12, 34], auto=[("(auto) category", lookup("D", "Categories", "B"))])
 
-sheet("Tiebreakers", ["set_id", "order", "question", "answer"], [
-    (S, 1, "What year was Dolly Parton born?", "1946"),
-    (S, 2, "What year did World War I officially end?", "1918"),
-    (S, 3, "What year did Sabrina Carpenter release her debut album, ‘Eyes Wide Open’?", "2015"),
+# Tiebreaker groups: a set picks one group (Sets.tiebreaker_id), like a category's questions
+sheet("Tiebreakers", ["tiebreaker_id", "order", "question", "answer"], [
+    ("T001", 1, "What year was Dolly Parton born?", "1946"),
+    ("T001", 2, "What year did World War I officially end?", "1918"),
+    ("T001", 3, "What year did Sabrina Carpenter release her debut album, ‘Eyes Wide Open’?", "2015"),
+    ("T002", 1, "What year did the first Macy's Thanksgiving Day Parade take place?", "1924"),
+    ("T002", 2, "What year did Neil Armstrong walk on the Moon?", "1969"),
+    ("T002", 3, "What year was the first iPhone released?", "2007"),
 ], [12, 7, 70, 12])
 
 D = dt.date

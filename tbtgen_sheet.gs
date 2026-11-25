@@ -1,4 +1,4 @@
-// ===== TBTgen sheet script · VERSION 2026-11-25 · paste ALL of this file, replacing everything =====
+// ===== TBTgen sheet script · VERSION 2026-11-25 23:53 · paste ALL of this file, replacing everything =====
 /**
  * TBTgen helpers for the Trivia Bank Google Sheet.
  *
@@ -237,7 +237,7 @@ function showKey_(key) {
 }
 
 // Bump when this script changes; TBTgen compares it with the version it expects (build.SCRIPT_VERSION).
-const SCRIPT_VERSION = '2026-11-25';
+const SCRIPT_VERSION = '2026-11-25 23:53';
 
 function keyOk_(given) {
   const key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);

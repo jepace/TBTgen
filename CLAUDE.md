@@ -94,7 +94,7 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - Importer subtext: keynote_read gives Slide.parts[(main, sub)] per text box from styles (Keynote storage field 5 para
   / field 8 char style tables; CharacterStyleProperties 2=italic 3=size; pptx a:rPr i/sz). Only a TRAILING italic/
   smaller run is sub (mid-sentence emphasis stays). Question box sub -> question_note; answer boxes kept whole.
-- Script versioning: tbtgen_sheet.gs SCRIPT_VERSION (returned by "tables") vs build.SCRIPT_VERSION. BUMP BOTH (and the
-  VERSION in the .gs first line) whenever the .gs changes. Out-of-date script: terminal WARNING, red banner in the app, Status row, and save errors
+- Script versioning: tbtgen_sheet.gs SCRIPT_VERSION (returned by "tables") vs build.SCRIPT_VERSION. Version = "YYYY-MM-DD HH:MM";
+  run `python3 bump_script_version.py` after EVERY .gs change (stamps .gs first line, .gs SCRIPT_VERSION, build.py). Out-of-date script: terminal WARNING, red banner in the app, Status row, and save errors
   ("not editable"/"unknown action") get the redeploy hint.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

@@ -150,7 +150,7 @@ def sheet_call(cfg, action, payload=None):
 
 
 SHEET_URL = None  # the Google Sheet's own address, when the web app reports it
-SCRIPT_VERSION = "2026-11-25"  # the tbtgen_sheet.gs this TBTgen expects (its SCRIPT_VERSION)
+SCRIPT_VERSION = "2026-11-25 23:53"  # the tbtgen_sheet.gs this TBTgen expects (its SCRIPT_VERSION)
 SHEET_SCRIPT = None    # the version the deployed script reports ("" = older than versioning)
 
 

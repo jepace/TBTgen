@@ -1057,7 +1057,7 @@ th.asc::after{content:" ▲";font-size:.75em}th.desc::after{content:" ▼";font-
 <div class="card"><div class="row"><input type="search" id="cSearch" placeholder="Search categories…">
   <label class="row small" style="gap:5px"><input type="checkbox" id="cRetired"> show retired</label>
   <span class="muted small" id="cCount"></span><span class="spacer"></span><button id="ideasBtn">Category ideas with AI…</button><button class="primary" id="newCat">New category</button></div></div>
-<div class="card" style="padding:6px 16px"><table><thead><tr><th data-tbl="cats" data-sort="label">Category</th><th class="hide-sm" data-tbl="cats" data-sort="type">Type</th><th data-tbl="cats" data-sort="n">Questions</th>
+<div class="card" style="padding:6px 16px"><table><thead><tr><th data-tbl="cats" data-sort="id">ID</th><th data-tbl="cats" data-sort="label">Category</th><th class="hide-sm" data-tbl="cats" data-sort="type">Type</th><th data-tbl="cats" data-sort="n">Questions</th>
   <th class="hide-sm" data-tbl="cats" data-sort="last">Last played</th><th class="hide-sm" data-tbl="cats" data-sort="sets">In sets</th></tr></thead><tbody id="cRows"></tbody></table><div id="pg-cats"></div></div>
 </section>
 
@@ -1476,16 +1476,16 @@ async function loadCats(){const r=await get("/api/categories").catch(e=>({error:
 function daysAgo(d){return d?Math.round((Date.parse(S.cats?.today||new Date().toISOString().slice(0,10))-Date.parse(d))/864e5):null}
 function renderCats(){if(!S.cats)return;const q=$("#cSearch").value.toLowerCase(),showR=$("#cRetired").checked;
   const all=sortRows("cats",S.cats.categories.filter(c=>(showR||!c.retired)&&(`${c.id} ${c.label} ${c.blurb} ${c.season_tag}`.toLowerCase().includes(q))),
-    {label:c=>c.label,type:c=>c.type,n:c=>c.questions.length,last:c=>c.last_played,sets:c=>c.in_sets.length});markSort("cats");
+    {id:c=>c.id,label:c=>c.label,type:c=>c.type,n:c=>c.questions.length,last:c=>c.last_played,sets:c=>c.in_sets.length});markSort("cats");
   $("#cCount").textContent=`${all.length} categor${all.length==1?"y":"ies"}`;const cs=pageRows("cats",all,50);
   $("#cRows").innerHTML=cs.length?cs.map(c=>{const n=c.questions.length,ago=daysAgo(c.last_played);
-    return `<tr class="click${c.retired?" dim":""}" data-cid="${esc(c.id)}"><td><strong>${esc(c.label)}</strong> <span class="mono muted">${esc(c.id)}</span>${c.retired?' <span class="tag">retired</span>':""}
+    return `<tr class="click${c.retired?" dim":""}" data-cid="${esc(c.id)}"><td class="mono">${esc(c.id)}</td><td><strong>${esc(c.label)}</strong>${c.retired?' <span class="tag">retired</span>':""}
       <div class="small muted">${esc(c.blurb).slice(0,110)}${c.blurb.length>110?"…":""}</div><div class="row" style="gap:4px">${(()=>{const n=Object.fromEntries(DIFFS.map(x=>[x,c.questions.filter(q=>q.difficulty===x).length]));
         return DIFFS.filter(x=>n[x]).map(x=>`${dtag(x)}<span class="small muted">${n[x]}</span>`).join(" ")})()}${gchips(GENS.filter(g=>c.gens[g]>=3))}</div></td><td class="hide-sm">${c.type!=="standard"?`<span class="tag">${esc(c.type)}</span>`:'<span class="muted small">standard</span>'}${c.season_tag?`<div class="small muted">${esc(c.season_tag)}</div>`:""}</td>
       <td>${n===5?`<span class="tag ok">5</span>`:`<span class="tag ${n?"warn":"bad"}">${n}</span>`}</td>
       <td class="hide-sm small">${c.last_played?`${fmtDate(c.last_played)} <span class="muted">(${ago}d ago)</span><div class="muted">${esc(c.played_at.join(", "))}</div>`:'<span class="muted">never</span>'}</td>
       <td class="hide-sm small" style="white-space:nowrap">${c.in_sets.map(esc).join("<br>")||'<span class="muted">—</span>'}</td></tr>`}).join("")
-    :`<tr><td colspan="5" class="empty">No categories match.</td></tr>`;
+    :`<tr><td colspan="6" class="empty">No categories match.</td></tr>`;
   $$("#cRows tr.click").forEach(tr=>tr.onclick=()=>editCategory(S.cats.categories.find(c=>c.id===tr.dataset.cid)))}
 RENDER.cats=renderCats;$("#cSearch").oninput=()=>{PAGE.cats=0;renderCats()};$("#cRetired").onchange=renderCats;$("#newCat").onclick=()=>editCategory(null);$("#ideasBtn").onclick=aiIdeas;
 async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!c.id;let slots=c.questions.map(q=>({id:q.id,question:q.question,answer:q.answer,generations:q.generations||[],difficulty:q.difficulty||""}));

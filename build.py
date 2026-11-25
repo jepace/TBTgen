@@ -150,12 +150,20 @@ def sheet_call(cfg, action, payload=None):
 
 
 SHEET_URL = None  # the Google Sheet's own address, when the web app reports it
+SCRIPT_VERSION = "2026-11-25"  # the tbtgen_sheet.gs this TBTgen expects (its SCRIPT_VERSION)
+SHEET_SCRIPT = None    # the version the deployed script reports ("" = older than versioning)
 
 
 def tables_from_sheet(cfg):
     global SHEET_URL
     data = sheet_call(cfg, "tables")
+    global SHEET_SCRIPT
     SHEET_URL = data.get("url") or SHEET_URL
+    SHEET_SCRIPT = str(data.get("version") or "")
+    if SHEET_SCRIPT < SCRIPT_VERSION:
+        print(f"WARNING: the Google Sheet's script is out of date ({SHEET_SCRIPT or 'an older version'}; this TBTgen "
+              f"needs {SCRIPT_VERSION}). Paste in tbtgen_sheet.gs and redeploy: Deploy > Manage deployments > edit "
+              "(pencil) > Version: New version > Deploy.", file=sys.stderr)
     CACHE.mkdir(exist_ok=True)
     (CACHE / "sheet_snapshot.json").write_text(json.dumps(data["tables"]))   # last copy, for reference
     return data["tables"]

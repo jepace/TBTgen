@@ -235,6 +235,9 @@ function showKey_(key) {
   SpreadsheetApp.getUi().showModalDialog(html, 'TBTgen generator access');
 }
 
+// Bump when this script changes; TBTgen compares it with the version it expects (build.SCRIPT_VERSION).
+const SCRIPT_VERSION = '2026-11-25';
+
 function keyOk_(given) {
   const key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);
   return !!key && typeof given === 'string' && given === key;
@@ -260,7 +263,7 @@ function tables_() {
       sh.getRange(1, 1, rows, cols).getValues().map(r => r.map(v =>
         v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : v));
   });
-  return { ok: true, tables: tables, url: ss.getUrl() };
+  return { ok: true, tables: tables, url: ss.getUrl(), version: SCRIPT_VERSION };
 }
 
 /**

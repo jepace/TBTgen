@@ -62,7 +62,7 @@ class SheetWriter:
             return build.sheet_call(self.cfg, action, payload)
         except build.SheetError as e:
             msg = str(e)
-            if "unknown action" in msg:
+            if "unknown action" in msg or "not editable" in msg:
                 msg += " (the sheet's script is older than this TBTgen: paste in the new tbtgen_sheet.gs and " \
                        "use Deploy > Manage deployments > edit > Version: New version)"
             raise WriteError(msg)

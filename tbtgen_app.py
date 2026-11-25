@@ -461,7 +461,8 @@ def api_status():
             except Exception:
                 pass  # the error is shown from DATA["error"]
         st.update(source=DATA["source"] or ("Google Sheet" if build.load_config() else "trivia_bank.xlsx"),
-                  loaded_at=DATA["loaded_at"], sheet_url=DATA["sheet_url"], error=DATA["error"])
+                  loaded_at=DATA["loaded_at"], sheet_url=DATA["sheet_url"], error=DATA["error"],
+                  script_version=build.SHEET_SCRIPT, script_expected=build.SCRIPT_VERSION)
         try:
             import video
             st["fonts"] = video.fonts_report()
@@ -1375,6 +1376,8 @@ async function loadStatus(){const s=await get("/api/status");const ok=b=>b?'<spa
     ["ffmpeg",s.ffmpeg?`${ok(true)} installed`:`${ok(false)} not installed: needed for music/movie clips and videos`],
     ["Data source",`${esc(s.source||"?")}${s.loaded_at?` <span class="muted">(read at ${esc(s.loaded_at)})</span>`:""}`],
     ["Google Sheet link",s.config?`${ok(true)} tbtgen_config.json found`:`<span class="muted">not set up: using trivia_bank.xlsx (see README: “Connect the generator to the Google Sheet”)</span>`],
+    ...(s.config&&s.script_version!==undefined&&s.source==="Google Sheet"?[["Sheet script",s.script_version>=s.script_expected?`${ok(true)} up to date (${esc(s.script_version)})`:
+      `${ok(false)} out of date (${esc(s.script_version||"older version")}; needs ${esc(s.script_expected)}): paste in tbtgen_sheet.gs, then Deploy → Manage deployments → pencil → Version: <b>New version</b> → Deploy`]]:[]),
     ["TBTgen folder",`<span class="mono">${esc(s.root)}</span>`],["Decks & videos",`<span class="mono">${esc(s.out)}</span>`]];
   let html=`<div class="card"><h2>Setup</h2><div class="kv">${rows.map(([k,v])=>`<div>${k}</div><div>${v}</div>`).join("")}</div>
     <div class="row" style="margin-top:12px"><button id="testConn">${s.config?"Test Google Sheet connection":"Re-read spreadsheet"}</button><span id="testRes" class="small"></span></div></div>`;
@@ -1909,6 +1912,10 @@ $("#runHide").onclick=()=>$("#runcard").classList.add("hidden");$("#busy").oncli
 
 /* ---------- header ---------- */
 async function refreshSource(){const s=await get("/api/status");$("#source").textContent="Reading: "+(s.source||"?")+(s.loaded_at?` · ${s.loaded_at}`:"");
+  const old=s.source==="Google Sheet"&&s.script_version!==null&&s.script_version!==undefined&&s.script_version<s.script_expected;
+  let ban=$("#scriptBanner");if(old&&!ban){ban=document.createElement("div");ban.id="scriptBanner";ban.className="card note bad";document.querySelector("main").insertBefore(ban,document.querySelector("nav")||document.querySelector("main").children[1])}
+  if(ban){ban.classList.toggle("hidden",!old);if(old)ban.innerHTML=`<strong>The Google Sheet's script is out of date</strong> (${esc(s.script_version||"an older version")}; this TBTgen needs ${esc(s.script_expected)}), so some saves will be refused.
+    Paste in <span class="mono">tbtgen_sheet.gs</span>, save, then <b>Deploy → Manage deployments → pencil → Version: New version → Deploy</b>, then Reload data.`}
   $("#openSheet").classList.toggle("hidden",!(s.sheet_url||s.source==="trivia_bank.xlsx"));$("#openSheet").textContent=s.sheet_url?"Open Google Sheet":"Open spreadsheet";return s}
 $("#reloadData").onclick=async()=>{$("#reloadData").disabled=true;$("#reloadData").textContent="Reading…";const r=await post("/api/reload");
   $("#reloadData").disabled=false;$("#reloadData").textContent="Reload data";if(r.error){alert("Couldn't read the spreadsheet: "+r.error);return}

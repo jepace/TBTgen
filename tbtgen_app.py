@@ -47,7 +47,7 @@ if not MISSING:
 
 
 # ------------------------------------------------------------------------------------------ data
-DATA = {"bank": None, "source": None, "loaded_at": None, "error": None, "sheet_url": None}
+DATA = {"bank": None, "source": None, "loaded_at": None, "error": None, "sheet_url": None, "error_at": 0}
 DATA_LOCK = threading.Lock()
 
 
@@ -56,6 +56,10 @@ def get_bank(force=False):
     with DATA_LOCK:
         if DATA["bank"] is not None and not force:
             return DATA["bank"]
+        # the page asks for several things at once: after a failure, give them all the same answer for a little
+        # while instead of each one trying the (possibly slow) sheet again
+        if not force and DATA["error"] and time.time() - DATA["error_at"] < 20:
+            raise RuntimeError(DATA["error"])
         cfg = build.load_config()
         try:
             if cfg:
@@ -67,7 +71,8 @@ def get_bank(force=False):
             DATA.update(bank=build.load_bank(tables), source=source, sheet_url=url, error=None,
                         loaded_at=time.strftime("%H:%M:%S"))
         except Exception as e:
-            DATA.update(error=str(e))
+            DATA.update(error=str(e), error_at=time.time())
+            print(f"Couldn't load the question bank: {e}", file=sys.stderr, flush=True)
             raise
         return DATA["bank"]
 
@@ -510,13 +515,18 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def send_json(self, obj, code=200):
+        if code >= 500 and isinstance(obj, dict) and obj.get("error"):
+            print(f"Error ({urlparse(self.path).path}): {obj['error']}", file=sys.stderr, flush=True)
         b = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(b)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(b)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(b)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the page stopped waiting (reloaded or closed): nothing to do
 
     def send_file(self, path, download=False):
         size = path.stat().st_size
@@ -807,6 +817,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error": "not found"}, 404)
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            return  # a page that went away mid-request: not worth a traceback
+        super().handle_error(request, client_address)
+
+
 def free_port(preferred=8642):
     for port in [preferred, *range(preferred + 1, preferred + 50)]:
         with socket.socket() as s:
@@ -820,7 +839,7 @@ def free_port(preferred=8642):
 
 def main():
     port = free_port()
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    srv = Server(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{srv.server_address[1]}/"
     print(f"TBTgen is running at {url}\nLeave this window open while you use it; close it (or click Quit) to stop.")
     if "--no-browser" not in sys.argv:

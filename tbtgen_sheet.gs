@@ -1,3 +1,4 @@
+// ===== TBTgen sheet script · VERSION 2026-11-25 · paste ALL of this file, replacing everything =====
 /**
  * TBTgen helpers for the Trivia Bank Google Sheet.
  *

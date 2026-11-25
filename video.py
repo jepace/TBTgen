@@ -272,23 +272,17 @@ def slide_answer(c, qq, num, kind, revealed):
     top = question_top(c, num, qq["question"], qq.get("question_note", ""))
     c.logo()
     right = (5.6, top, 7.4, 7.2 - top)
-    if qq["question_image"] and not qq["media"]:
-        c.picture(build.asset(qq["question_image"]), *right)
-    elif qq["media"] and kind_of(qq, kind) == "music":
+    if qq["media"] and kind_of(qq, kind) == "music":  # the question picture isn't shown again
         c.picture(build.music_frame(), *right)
     if not revealed:
         return
     below = c.rich(0.5, top + 0.15, 4.9, qq["answer"], "bold", 26, GOLD)
-    img_top = top + 1.6
     if str(qq.get("answer_note", "") or "").strip():
-        below = c.rich(0.5, below + 0.1, 4.9, str(qq["answer_note"]).strip(), "bolditalic", 16)
-        img_top = max(img_top, below + 0.2)
+        c.rich(0.5, below + 0.1, 4.9, str(qq["answer_note"]).strip(), "bolditalic", 16)
     if qq["answer_image"]:
-        img_box = (0.5, img_top, 4.9, 7.2 - img_top) if (qq["question_image"] and not qq["media"]) else right
-        if img_box == right:  # cover the question picture
-            c.d.rectangle([c.px(right[0]), c.px(right[1]), c.px(right[0] + right[2]), c.px(right[1] + right[3])],
-                          fill="black")
-        c.picture(build.asset(qq["answer_image"]), *img_box)
+        c.d.rectangle([c.px(right[0]), c.px(right[1]), c.px(right[0] + right[2]), c.px(right[1] + right[3])],
+                      fill="black")  # covers the music frame, if any
+        c.picture(build.asset(qq["answer_image"]), *right)
 
 
 def slide_pencils(c, rnd):

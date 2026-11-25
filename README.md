@@ -10,7 +10,8 @@ an at-home video version, from a browser-based app or the command line.
 - Question slides auto-advance after 60 s (or clip length + 30 s for music/movie). The Trivia By Troy logo starts
   grey and fills with colour from the bottom over that time, as a countdown. Pictures appear immediately.
 - Music/movie clips play automatically on the question slide.
-- Answer rounds: each question re-appears; one click reveals the answer (+ answer note, answer picture; music replays).
+- Answer rounds: each question re-appears (without its picture); one click reveals the answer (+ answer note,
+  answer picture; music replays).
 - Tiebreaker slides, and an answer key `.txt` next to each deck.
 - File names include the date, venue and host: `2026-11-23 101 Wine Press (James).pptx`.
 - Checks before building: warns if a venue already saw a category, or a question (even in a different category),

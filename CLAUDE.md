@@ -10,6 +10,7 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   autoplay and click-to-reveal answers. Keynote import does NOT advance timed slides (it adds the
   transition delay after the 60 s build); `keynote_finish.applescript` is the untested fix.
 - The user didn't want the question photo animated: it appears immediately. Only the logo countdown animates.
+- Answer slides never reuse the question photo: only the answer photo (right side), revealed with the answer.
 - Hosts are all on Macs today; presenting in PowerPoint is acceptable.
 - Real data: Google Drive folder "TBTgen"; schedule in the "Trivia By Troy Schedule" calendar
   (events named "Venue - Host", ~16 venues Mon-Thu).

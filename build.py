@@ -859,14 +859,11 @@ def slide_answer(deck, cat, qq, num):
     top = question_block(s, num, qq["question"], qq.get("question_note", ""))
     picture(s, ASSETS / "brand/tbt_logo.png", *LOGO_BOX)
     right = (Inches(5.6), top, Inches(7.4), Inches(7.2) - top)
-    reveal = []
-    if qq["question_image"] and not qq["media"]:
-        picture(s, asset(qq["question_image"]), *right)
+    reveal = []  # the question's picture is not shown again: only the answer picture, revealed with the answer
     ans = text(s, Inches(0.5), top + Inches(0.15), Inches(4.9), Inches(1.4), qq["answer"], size=26, bold=True, color=GOLD,
                markup=True)
     t.text_ids.add(ans.shape_id)
     reveal.append(("appear", ans.shape_id))
-    img_top = top + Inches(1.6)
     anote = str(qq.get("answer_note", "") or "").strip()
     if anote:  # extra text revealed with the answer (scoring note, fun fact, ...)
         import math
@@ -876,16 +873,14 @@ def slide_answer(deck, cat, qq, num):
         nt = text(s, Inches(0.5), ny, Inches(4.9), nh, anote, size=16, italic=True, markup=True)
         t.text_ids.add(nt.shape_id)
         reveal.append(("appear", nt.shape_id))
-        img_top = max(img_top, ny + nh + Inches(0.15))
-    left_img = (Inches(0.5), img_top, Inches(4.9), Inches(7.2) - img_top)
+
     if qq["media"] and (kind == "music" or Path(qq["media"]).suffix.lower() in (".mp3", ".m4a", ".wav", ".aac")):
         _, _, av, art, clip = q_media(qq, kind)
         vid = s.shapes.add_movie(str(av), *fit_box(art, *right), poster_frame_image=str(art), mime_type="video/mp4")
         reveal += [("appear", vid.shape_id), ("play", vid.shape_id, int(clip * 1000))]
         t.media.append(vid.shape_id)
     elif qq["answer_image"]:
-        box = left_img if (qq["question_image"] and not qq["media"]) else right
-        img = picture(s, asset(qq["answer_image"]), *box)
+        img = picture(s, asset(qq["answer_image"]), *right)
         reveal.append(("appear", img.shape_id))
     t.clicks.append(reveal)
     t.apply(s)

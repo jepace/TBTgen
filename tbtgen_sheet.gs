@@ -1,4 +1,4 @@
-// ===== TBTgen sheet script · VERSION 2026-11-25 23:53 · paste ALL of this file, replacing everything =====
+// ===== TBTgen sheet script · VERSION 2026-11-25 23:58 · paste ALL of this file, replacing everything =====
 /**
  * TBTgen helpers for the Trivia Bank Google Sheet.
  *
@@ -237,7 +237,7 @@ function showKey_(key) {
 }
 
 // Bump when this script changes; TBTgen compares it with the version it expects (build.SCRIPT_VERSION).
-const SCRIPT_VERSION = '2026-11-25 23:53';
+const SCRIPT_VERSION = '2026-11-25 23:58';
 
 function keyOk_(given) {
   const key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);
@@ -250,7 +250,9 @@ function json_(obj) {
 
 /** GET is not used: the key must never be in a URL (URLs end up in logs and histories). Reads are POST 'tables'. */
 function doGet(e) {
-  return json_({ ok: false, error: 'unknown action: this TBTgen reads the sheet with POST (update TBTgen)' });
+  // Opening the web app URL in a browser shows which script version is deployed (no data, no key needed).
+  return json_({ ok: false, version: SCRIPT_VERSION,
+                 error: 'unknown action: this TBTgen reads the sheet with POST (update TBTgen)' });
 }
 
 /** Every tab's values (dates as yyyy-mm-dd). */

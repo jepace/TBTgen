@@ -17,7 +17,9 @@ an at-home video version, from a browser-based app or the command line.
 - Checks before building: warns if a venue already saw a category, or a question (even in a different category),
   within `repeat_lookback_days`, or if venues in the same region on back-to-back nights share questions; stops on
   retired or missing questions, a category without exactly positions 1–5, or a question used twice in one set.
-- Plays correctly in PowerPoint (Mac or Windows). Keynote's import does not auto-advance the timed slides.
+- Plays correctly in PowerPoint (Mac or Windows). For Keynote, tick **Also make Keynote copies** next to Build (Mac):
+  Keynote opens each deck, fixes the auto-advance timing (Keynote otherwise waits an extra 60 s) and saves a `.key`
+  next to the `.pptx`. Uses Keynote Creator Studio when installed, else the classic Keynote. Still being tested.
 
 ## Mac setup (once)
 ```
@@ -128,7 +130,8 @@ Runs **only** when you click a button; it suggests, and nothing changes until yo
   fallback: if the model declines a request, the API retries it on a fallback model.
 
 ## At-home video
-`python3 build.py --preview SET_ID        # a deck of one set, not tied to a night -> out/preview/
+`python3 build.py --keynote ...          # Mac: also save .key copies (with any build or --preview)
+python3 build.py --preview SET_ID        # a deck of one set, not tied to a night -> out/preview/
 python3 build.py --video SET_ID` (or the Video tab) makes `out/video/SET_ID at-home.mp4`: title, how to play,
 3 rounds with the logo countdown on every question (default 30 s), the answers after each round, then a thanks
 card. Music and movie clips play on their questions (clip length + 10 s, or `video_media_extra_seconds`).

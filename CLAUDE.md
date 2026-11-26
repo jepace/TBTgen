@@ -8,7 +8,12 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
   Columns whose header starts with "(auto)" are formula helpers; the generator ignores them.
 - Verified by the user: PowerPoint (Windows) plays the 60 s auto-advance, countdown logo wipe, media
   autoplay and click-to-reveal answers. Keynote import does NOT advance timed slides (it adds the
-  transition delay after the 60 s build); `keynote_finish.applescript` is the untested fix.
+  transition delay after the 60 s build); `keynote_finish.applescript` fixes it (delay 0.1 on timed slides) and saves
+  .key: first real run on the user's Mac worked (45 slides fixed, classic Keynote). It prefers Keynote Creator Studio
+  (bundle com.apple.Keynote; classic = com.apple.iWork.Keynote), compiles the Keynote part at run time for the chosen
+  app, opens files with `open -b` (sandboxed app refused script-passed paths). TBT_KEYNOTE=<bundle id> overrides.
+  build.py --keynote -> make_keynote() runs it after building (Mac only); app: "Also make Keynote copies" checkbox
+  (remembered; also used by Preview deck). Files tab lists .key packages as one file (Open only).
 - The user didn't want the question photo animated: it appears immediately. Only the logo countdown animates.
 - Answer slides never reuse the question photo: only the answer photo (right side), revealed with the answer.
 - Hosts are all on Macs today; presenting in PowerPoint is acceptable.

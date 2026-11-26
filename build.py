@@ -1019,6 +1019,30 @@ def record_usage_sheet(rows, cfg):
     sheet_call(cfg, "append_usage", {"rows": [[str(k[0]), *k[1:]] for k in rows]})
 
 
+def make_keynote(paths):
+    """Mac only: Keynote opens each .pptx, fixes the auto-advance timing and saves a .key next to it."""
+    if sys.platform != "darwin":
+        print("NOTE: Keynote copies can only be made on a Mac; the PowerPoint decks are ready.")
+        return
+    print(f"Keynote: converting {len(paths)} deck(s) (Keynote opens and closes each one; don't use it meanwhile)…",
+          flush=True)
+    try:
+        p = subprocess.run(["osascript", str(ROOT / "keynote_finish.applescript"), *[str(x) for x in paths]],
+                           capture_output=True, text=True, timeout=600 + 300 * len(paths))
+    except subprocess.TimeoutExpired:
+        print("WARNING: Keynote took too long; check for a dialog waiting in Keynote. The PowerPoint decks are ready.")
+        return
+    for line in (p.stdout + p.stderr).splitlines():
+        m = re.match(r"saved (.+\.key) \((\d+) timed slides fixed\)", line.strip())
+        if m:
+            k = Path(m.group(1))
+            print(f"built  {k.relative_to(ROOT) if k.is_relative_to(ROOT) else k}   (Keynote; {m.group(2)} timed slides)")
+        elif line.strip():
+            print(("Keynote: " if p.returncode == 0 else "WARNING: Keynote: ") + line.strip())
+    if p.returncode != 0:
+        print("WARNING: the Keynote copies weren't all made; the PowerPoint decks are ready.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bank", help="use this .xlsx file instead of the Google Sheet")
@@ -1033,6 +1057,8 @@ def main():
     ap.add_argument("--record", action="store_true", help="log the questions used to the Usage tab")
     ap.add_argument("--check", action="store_true", help="only run checks, build nothing")
     ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    ap.add_argument("--keynote", action="store_true",
+                    help="Mac only: also save a Keynote (.key) copy of each deck (keynote_finish.applescript)")
     ap.add_argument("--preview", metavar="SET_ID",
                     help="build a preview deck of this set, not tied to a night (out/preview/); nothing is logged")
     ap.add_argument("--video", metavar="SET_ID", help="make the at-home video for this set (out/video/)")
@@ -1090,6 +1116,8 @@ def main():
         path, secs = build_deck(bank, row, Path(a.out) / "preview")
         print(f"built  {Path(path).relative_to(ROOT) if Path(path).is_relative_to(ROOT) else path}   "
               f"(question time ≈ {round(secs / 60)} min)")
+        if a.keynote:
+            make_keynote([path])
         return
     if a.video:
         if a.video not in bank["sets"]:
@@ -1169,10 +1197,14 @@ def main():
     if a.check:
         return
 
+    built = []
     for r in schedule:
         path, secs = build_deck(bank, r, Path(a.out))
+        built.append(path)
         print(f"built  {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}   "
               f"(question time ≈ {secs / 60:.0f} min)")
+    if a.keynote and built:
+        make_keynote(built)
     if a.record:
         rows = usage_rows(bank, schedule)
         if rows:

@@ -441,6 +441,14 @@ def api_files():
     files = []
     if OUT.exists():
         for p in sorted(OUT.rglob("*")):
+            if any(part.lower().endswith(".key") for part in p.relative_to(OUT).parts[:-1]):
+                continue  # inside a Keynote package
+            if p.is_dir() and p.suffix.lower() == ".key":
+                st = p.stat()
+                size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                files.append({"name": p.name, "rel": p.relative_to(OUT).as_posix(), "kind": "deck", "size": size,
+                              "package": True, "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))})
+                continue
             if p.is_file() and p.suffix.lower() in (".pptx", ".txt", ".mp4", ".key"):
                 kind = {".pptx": "deck", ".key": "deck", ".txt": "answer key", ".mp4": "video"}[p.suffix.lower()]
                 st = p.stat()
@@ -857,11 +865,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not set_id:
                     return self.send_json({"error": "pick a set"}, 400)
                 args, title = ["--preview", set_id], f"Preview deck: {set_id}"
+                if body.get("keynote"):
+                    args.append("--keynote")
             else:
                 nights = [n for n in body.get("nights", []) if ":" in n]
                 if not nights:
                     return self.send_json({"error": "no nights selected"}, 400)
                 args = ["--only", ",".join(nights)]
+                if body.get("keynote") and mode != "check":
+                    args.append("--keynote")
                 if mode == "check":
                     args.append("--check")
                 elif body.get("record"):
@@ -876,6 +888,9 @@ class Handler(BaseHTTPRequestHandler):
                 open_path(OUT)
                 return self.send_json({"ok": True})
             p = safe_under(OUT, body.get("file", ""))
+            if not p:  # a Keynote package is a folder
+                q = (OUT / body.get("file", "")).resolve()
+                p = q if q.is_dir() and q.suffix.lower() == ".key" and OUT.resolve() in q.parents else None
             if not p:
                 return self.send_json({"error": "file not found"}, 404)
             (reveal_path if body.get("reveal") else open_path)(p)
@@ -1044,6 +1059,8 @@ th.asc::after{content:" ▲";font-size:.75em}th.desc::after{content:" ▼";font-
     <button id="check">Check</button><button id="build" class="primary">Build</button>
     <label class="row" style="gap:6px" title="Writes what was played to the Usage tab, so repeat checks know about it">
       <input type="checkbox" id="record"> Log as played (Usage)</label>
+    <label class="row" style="gap:6px" title="Mac only: Keynote opens each deck, fixes the timing and saves a .key next to the .pptx">
+      <input type="checkbox" id="keynoteCopies"> Also make Keynote copies</label>
     <span class="spacer"></span><button id="openout">Open decks folder</button></div>
 </div>
 </section>
@@ -1262,7 +1279,8 @@ $$("#weekSeg button").forEach(b=>b.onclick=()=>{$$("#weekSeg button").forEach(x=
 $("#pick").onchange=e=>{if(!e.target.value)return;$$("#weekSeg button").forEach(x=>x.classList.remove("on"));S.week=e.target.value;loadWeek()};
 $("#all").onclick=()=>{S.nights.forEach(n=>n.sel=true);renderNights()};$("#none").onclick=()=>{S.nights.forEach(n=>n.sel=false);renderNights()};
 $("#check").onclick=()=>run({mode:"check",nights:selected()});
-$("#build").onclick=()=>run({mode:"build",nights:selected(),record:$("#record").checked});
+$("#build").onclick=()=>run({mode:"build",nights:selected(),record:$("#record").checked,keynote:$("#keynoteCopies").checked});
+$("#keynoteCopies").checked=store.get("keynote",false);$("#keynoteCopies").onchange=e=>store.set("keynote",e.target.checked);
 $("#openout").onclick=()=>post("/api/open",{folder:true});
 
 /* ---------- sets ---------- */
@@ -1293,7 +1311,7 @@ function renderSets(){const q=$("#sSearch").value.toLowerCase(),how=$("#sSort").
       <details style="margin-top:8px"><summary class="small">Age &amp; difficulty mix</summary><div style="margin-top:6px">${mixHtml(s.mix)}</div></details>
       ${probs?`<div style="margin-top:8px">${probs}</div>`:""}</div>`}).join(""):`<div class="card empty">${S.sets.length?"No sets match.":"No sets on the Sets tab yet."}</div>`;
   $$("[data-video]").forEach(b=>b.onclick=()=>{store.set("vSet",b.dataset.video);showTab("video")});
-  $$("[data-preview]").forEach(b=>b.onclick=()=>run({mode:"preview",set_id:b.dataset.preview}));
+  $$("[data-preview]").forEach(b=>b.onclick=()=>run({mode:"preview",set_id:b.dataset.preview,keynote:store.get("keynote",false)}));
   $$("[data-editset]").forEach(b=>b.onclick=()=>editSet(S.sets.find(x=>x.set_id===b.dataset.editset)));
   $$("[data-aiset]").forEach(b=>b.onclick=()=>aiCheckSet(S.sets.find(x=>x.set_id===b.dataset.aiset)));
   $$("[data-tagset]").forEach(b=>b.onclick=()=>aiTag({set_id:b.dataset.tagset},`Tag: set ${b.dataset.tagset}`,1,()=>loadSets()))}
@@ -1365,7 +1383,7 @@ function renderFiles(){const q=$("#fSearch").value.toLowerCase(),dflt={key:"made
   $("#fRows").innerHTML=fs.length?fs.map(f=>`<tr><td>${esc(f.name)}${f.rel.includes("/")?` <span class="muted small">${esc(f.rel.split("/")[0])}/</span>`:""}</td>
     <td class="hide-sm"><span class="tag">${f.kind}</span></td><td class="hide-sm small">${fmtSize(f.size)}</td><td class="hide-sm small">${esc(f.modified)}</td>
     <td style="text-align:right;white-space:nowrap">${f.kind!=="deck"?`<button class="sm" data-view="${esc(f.rel)}" data-kind="${f.kind}">View</button> `:""}<button class="sm" data-open="${esc(f.rel)}">Open</button>
-    <button class="sm" data-dl="${esc(f.rel)}">Download</button></td></tr>`).join(""):`<tr><td colspan="5" class="empty">No files yet. Build some decks or a video.</td></tr>`;
+    ${f.package?"":`<button class="sm" data-dl="${esc(f.rel)}">Download</button>`}</td></tr>`).join(""):`<tr><td colspan="5" class="empty">No files yet. Build some decks or a video.</td></tr>`;
   $$("[data-open]").forEach(b=>b.onclick=()=>post("/api/open",{file:b.dataset.open}));
   $$("[data-dl]").forEach(b=>b.onclick=()=>{location.href=fileUrl(b.dataset.dl,true)});
   $$("[data-view]").forEach(b=>b.onclick=async()=>{const rel=b.dataset.view;

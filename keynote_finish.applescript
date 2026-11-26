@@ -39,9 +39,16 @@ on run argv
 	-- need any particular Keynote to be installed.
 	set q to quote
 	set worker to "on run {pptxPath, keyPath}
+	-- open it the way Finder does: a sandboxed Keynote may refuse a file path handed to it by a script
+	do shell script " & q & "open -b " & appId & " " & q & " & quoted form of pptxPath
 	tell application id " & q & appId & q & "
 		activate
-		open (POSIX file pptxPath)
+		set waited to 0
+		repeat until (count documents) > 0
+			delay 1
+			set waited to waited + 1
+			if waited > 180 then error " & q & "Keynote didn't open the deck (a dialog may be waiting): " & q & " & pptxPath
+		end repeat
 		delay 2
 		set doc to front document
 		set fixedCount to 0

@@ -12,9 +12,21 @@ on run argv
 		return "Give one or more .pptx paths."
 	end if
 	set report to ""
+	-- start Keynote and wait until it is ready (opening a file too early fails with "isn't running")
+	tell application "Keynote" to launch
+	repeat 60 times
+		if application "Keynote" is running then exit repeat
+		delay 0.5
+	end repeat
+	delay 2
 	repeat with p in argv
 		set pptxPath to p as text
 		set keyPath to (text 1 thru -6 of pptxPath) & ".key"
+		try
+			do shell script "test -f " & quoted form of pptxPath
+		on error
+			return report & "Not found: " & pptxPath
+		end try
 		set inFile to POSIX file pptxPath
 		set outFile to POSIX file keyPath
 		tell application "Keynote"

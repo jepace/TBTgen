@@ -22,18 +22,18 @@ on run argv
 			open inFile
 			delay 2
 			set doc to front document
-			set fixed to 0
+			set fixedCount to 0
 			repeat with s in slides of doc
 				set tp to transition properties of s
 				if automatic transition of tp then
 					set transition properties of s to {automatic transition:true, transition delay:0.1}
-					set fixed to fixed + 1
+					set fixedCount to fixedCount + 1
 				end if
 			end repeat
 			save doc in outFile
 			close doc saving no
 		end tell
-		set report to report & "saved " & keyPath & " (" & fixed & " timed slides fixed)" & linefeed
+		set report to report & "saved " & keyPath & " (" & fixedCount & " timed slides fixed)" & linefeed
 	end repeat
 	return report
 end run

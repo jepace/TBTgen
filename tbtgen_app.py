@@ -552,7 +552,8 @@ _LOGO = {}
 
 def brand_logo(size=128):
     """The Trivia By Troy logo, shrunk once for the page header and the browser tab."""
-    if "png" not in _LOGO:
+    key = f"png{size}"
+    if key not in _LOGO:
         try:
             import io
             from PIL import Image
@@ -561,10 +562,10 @@ def brand_logo(size=128):
                 im.thumbnail((size, size), Image.LANCZOS)
                 buf = io.BytesIO()
                 im.save(buf, "PNG", optimize=True)
-                _LOGO["png"] = buf.getvalue()
+                _LOGO[key] = buf.getvalue()
         except Exception:
-            _LOGO["png"] = None
-    return _LOGO["png"]
+            _LOGO[key] = None
+    return _LOGO[key]
 
 
 def safe_under(base, rel):
@@ -661,8 +662,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b)
             return
-        if u.path in ("/logo.png", "/favicon.ico"):
-            b = brand_logo()
+        if u.path in ("/logo.png", "/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"):
+            b = brand_logo(180 if "apple" in u.path else 128)
             if b:
                 self.send_response(200)
                 self.send_header("Content-Type", "image/png")
@@ -943,6 +944,7 @@ def main():
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TBTgen</title><link rel="icon" type="image/png" href="/logo.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="apple-mobile-web-app-title" content="TBTgen">
 <style>
 :root{--bg:#f6f5f2;--card:#fff;--ink:#1d1d1f;--muted:#6b6b70;--line:#e3e1dc;--accent:#c2185b;--accent-ink:#fff;
 --ok:#1b7f4b;--warn:#a15c00;--bad:#b3261e;--chip:#efede8;--log:#16161a;--logink:#e8e6e3;--gold:#b8860b;--hover:#faf9f6}

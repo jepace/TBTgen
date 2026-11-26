@@ -51,7 +51,8 @@ downloaded .command file: right-click it → Open → Open.
 - **Nights**: a week of the schedule. Pick each night's set from its drop-down (saved to the Schedule tab), filter
   weekdays, tick nights, **Check** or **Build** decks; "Log as played" also writes the Usage tab. Nights with no set
   or an unknown venue can't be ticked. Each night shows the venue's audience and flags sets light on it.
-- **Sets**: each set's 9 categories by round, bonus, problems, age and difficulty mix, where/when each category was
+- **Sets**: **Preview deck** builds a deck of the set with the TBT logo and no host (not tied to a night, nothing logged).
+  Each set's 9 categories by round, bonus, problems, age and difficulty mix, where/when each category was
   last played, which nights use it, and its video. **New set / Edit set**: a 3×3 grid of category pickers, bonus,
   tiebreakers, with live warnings (played recently, not 5 questions, a question in two categories).
 - **Categories**: browse, create and edit categories and pick/reorder their 5 questions (search, or New question).
@@ -127,7 +128,8 @@ Runs **only** when you click a button; it suggests, and nothing changes until yo
   fallback: if the model declines a request, the API retries it on a fallback model.
 
 ## At-home video
-`python3 build.py --video SET_ID` (or the Video tab) makes `out/video/SET_ID at-home.mp4`: title, how to play,
+`python3 build.py --preview SET_ID        # a deck of one set, not tied to a night -> out/preview/
+python3 build.py --video SET_ID` (or the Video tab) makes `out/video/SET_ID at-home.mp4`: title, how to play,
 3 rounds with the logo countdown on every question (default 30 s), the answers after each round, then a thanks
 card. Music and movie clips play on their questions (clip length + 10 s, or `video_media_extra_seconds`).
 Needs ffmpeg. Uses Trebuchet MS / Savoye LET / Brush Script when the computer has them (a Mac does).

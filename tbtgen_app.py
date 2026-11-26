@@ -852,6 +852,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not body.get("media", True):
                     args.append("--video-no-media")
                 title = f"Video: {set_id}"
+            elif mode == "preview":
+                set_id = str(body.get("set_id", ""))
+                if not set_id:
+                    return self.send_json({"error": "pick a set"}, 400)
+                args, title = ["--preview", set_id], f"Preview deck: {set_id}"
             else:
                 nights = [n for n in body.get("nights", []) if ":" in n]
                 if not nights:
@@ -1282,11 +1287,13 @@ function renderSets(){const q=$("#sSearch").value.toLowerCase(),how=$("#sSort").
       ${s.errors.length?'<span class="tag bad">problems</span>':s.warnings.length?'<span class="tag warn">warnings</span>':'<span class="tag ok">ready</span>'}
       ${s.video?`<span class="tag">video ${fmtLen(s.video.length_seconds)}</span>`:""}<span class="spacer"></span>
       <button class="sm" data-editset="${esc(s.set_id)}">Edit set</button><button class="sm" data-aiset="${esc(s.set_id)}">Check with AI</button><button class="sm" data-tagset="${esc(s.set_id)}">Tag with AI</button>
+      <button class="sm" data-preview="${esc(s.set_id)}" title="A deck of this set with the Trivia By Troy logo and no host, not tied to a night">Preview deck</button>
       <button class="sm" data-video="${esc(s.set_id)}">${s.video?"Watch / remake video":"Make video"}</button></div>
       <div class="grid3">${rounds}</div><div class="small muted" style="margin-top:10px">Nights: ${nights}</div><div class="small muted" style="margin-top:4px">${tbInfo}</div>
       <details style="margin-top:8px"><summary class="small">Age &amp; difficulty mix</summary><div style="margin-top:6px">${mixHtml(s.mix)}</div></details>
       ${probs?`<div style="margin-top:8px">${probs}</div>`:""}</div>`}).join(""):`<div class="card empty">${S.sets.length?"No sets match.":"No sets on the Sets tab yet."}</div>`;
   $$("[data-video]").forEach(b=>b.onclick=()=>{store.set("vSet",b.dataset.video);showTab("video")});
+  $$("[data-preview]").forEach(b=>b.onclick=()=>run({mode:"preview",set_id:b.dataset.preview}));
   $$("[data-editset]").forEach(b=>b.onclick=()=>editSet(S.sets.find(x=>x.set_id===b.dataset.editset)));
   $$("[data-aiset]").forEach(b=>b.onclick=()=>aiCheckSet(S.sets.find(x=>x.set_id===b.dataset.aiset)));
   $$("[data-tagset]").forEach(b=>b.onclick=()=>aiTag({set_id:b.dataset.tagset},`Tag: set ${b.dataset.tagset}`,1,()=>loadSets()))}

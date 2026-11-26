@@ -1033,6 +1033,8 @@ def main():
     ap.add_argument("--record", action="store_true", help="log the questions used to the Usage tab")
     ap.add_argument("--check", action="store_true", help="only run checks, build nothing")
     ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    ap.add_argument("--preview", metavar="SET_ID",
+                    help="build a preview deck of this set, not tied to a night (out/preview/); nothing is logged")
     ap.add_argument("--video", metavar="SET_ID", help="make the at-home video for this set (out/video/)")
     ap.add_argument("--video-seconds", type=int, default=30, help="video: seconds per question (default 30)")
     ap.add_argument("--video-answer-seconds", type=float, default=6, help="video: seconds per answer (default 6)")
@@ -1069,6 +1071,26 @@ def main():
     if missing:
         print(f"NOTE: {len(missing)} question(s) have no ID yet and can't be used until they do.")
 
+    if a.preview:
+        if a.preview not in bank["sets"]:
+            sys.exit(f"Set '{a.preview}' is not on the Sets tab.")
+        errs, warns = check_sets(bank, {a.preview})
+        for w in warns:
+            print("WARNING:", w)
+        for e in errs:
+            print("ERROR:  ", e)
+        if errs:
+            sys.exit("Stopped: fix the problems above.")
+        # a stand-in venue: Trivia By Troy logo, no host slide, no upcoming nights
+        bank = dict(bank, venues={**bank["venues"], "__preview__": {
+            "venue_id": "__preview__", "name": f"Preview {a.preview}", "logo": "", "region": "", "night": "",
+            "upcoming_nights": "", "active": "Y", "calendar_name": "", "audience": ""}})
+        row = {"date": dt.date.today(), "venue_id": "__preview__", "set_id": a.preview, "host": ""}
+        print("deck: 0/1", flush=True)
+        path, secs = build_deck(bank, row, Path(a.out) / "preview")
+        print(f"built  {Path(path).relative_to(ROOT) if Path(path).is_relative_to(ROOT) else path}   "
+              f"(question time ≈ {round(secs / 60)} min)")
+        return
     if a.video:
         if a.video not in bank["sets"]:
             sys.exit(f"Set '{a.video}' is not on the Sets tab.")

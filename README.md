@@ -94,7 +94,8 @@ Picture and clip paths are relative to `assets/` (e.g. `images/turkey.jpg`, `med
 ### Slide text: notes and formatting
 - **question_note** is shown smaller under the question (a hint, "One point each!"); **answer_note** is revealed
   together with the answer (scoring note, fun fact). Both are optional; **notes** is for you only.
-- **Formatting** works in the question, answer, both notes and tiebreaker questions:
+- **Formatting** works in every text that reaches a slide: questions, answers, notes, tiebreakers, category titles and
+blurbs, venue names and upcoming nights, host names, and the Settings texts (social handles…):
 
 | Type | Shows as |
 |---|---|

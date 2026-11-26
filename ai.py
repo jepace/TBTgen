@@ -402,7 +402,7 @@ def generate(bank, topic, count=5, difficulty="mixed", notes="", ctype="standard
     if _s(notes):
         parts.append(f"Notes from the host: {_s(notes)}")
     parts += ["", "Example questions in our style:"] + [f"- Q: {_p(q['question'])}  A: {_p(q['answer'])}" for q in examples]
-    parts += ["", "Example category blurbs:"] + [f"- {b}" for b in rnd.sample(blurbs, min(4, len(blurbs)))]
+    parts += ["", "Example category blurbs:"] + [f"- {_p(b)}" for b in rnd.sample(blurbs, min(4, len(blurbs)))]
     if related:
         parts += ["", "Existing questions on similar subjects (don't repeat these):"] + [
             f"- {_p(q['question'])} ({_p(q['answer'])})" for q in related]
@@ -477,7 +477,7 @@ Reply with only a JSON object and no other text:
 def category_ideas(bank, theme="", count=10, generations=None, notes=""):
     prov, o = provider(bank["settings"])
     count = max(3, min(int(count or 10), 20))
-    existing = sorted({_s(c.get("title")) for c in bank["cats"].values() if _s(c.get("title"))})
+    existing = sorted({_p(c.get("title")) for c in bank["cats"].values() if _s(c.get("title"))})
     blurbs = [_s(c.get("blurb")) for c in bank["cats"].values() if _s(c.get("blurb")) and _s(c.get("type")) in ("", "standard")]
     parts = [f"Number of ideas: {count}", f"Theme or occasion: {_s(theme) or 'anything (a varied mix)'}",
              f"Today's date: {dt.date.today():%B %d, %Y}"]
@@ -485,7 +485,7 @@ def category_ideas(bank, theme="", count=10, generations=None, notes=""):
         parts.append(f"Target audience: {gen_line(generations)}. Make the ideas land with them.")
     if _s(notes):
         parts.append(f"Notes from the host: {_s(notes)}")
-    parts += ["", "Example blurbs in our voice:"] + [f"- {b}" for b in random.Random(theme).sample(blurbs, min(5, len(blurbs)))]
+    parts += ["", "Example blurbs in our voice:"] + [f"- {_p(b)}" for b in random.Random(theme).sample(blurbs, min(5, len(blurbs)))]
     parts += ["", "Existing categories (don't repeat these):"] + [f"- {t}" for t in existing]
     text, usage = prov.run(IDEAS_SYSTEM, "\n".join(parts), False)
     data = extract_json(text)

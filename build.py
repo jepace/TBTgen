@@ -532,7 +532,7 @@ def plain(s):
 
 
 def text(slide, x, y, w, h, content, size=20, bold=False, italic=False, font=FONT, align=PP_ALIGN.LEFT,
-         anchor=MSO_ANCHOR.TOP, color=WHITE, spacing=None, markup=False):
+         anchor=MSO_ANCHOR.TOP, color=WHITE, spacing=None, markup=True):
     tb = slide.shapes.add_textbox(x, y, w, h)
     tf = tb.text_frame
     tf.word_wrap = True
@@ -1033,7 +1033,7 @@ def build_deck(bank, row, outdir):
     picture(s, ASSETS / "brand/feedback_qr.jpg", 0, 0, W, H)
 
     outdir.mkdir(parents=True, exist_ok=True)
-    stem = safe_name(f"{as_date(row['date'])} {venue['name']}" + (f" ({host_txt})" if host_txt else ""))
+    stem = safe_name(plain(f"{as_date(row['date'])} {venue['name']}" + (f" ({host_txt})" if host_txt else "")))
     deck.prs.save(outdir / f"{stem}.pptx")
     (outdir / f"{stem} - answer key.txt").write_text(plain("\n".join(key_lines)) + "\n")
     return outdir / f"{stem}.pptx", total_secs

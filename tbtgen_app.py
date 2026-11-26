@@ -1264,7 +1264,7 @@ function renderNights(){const shown=sortRows("nights",S.nights.filter(n=>S.dayOn
         <option value="">— no set yet —</option>${(S.setIds||[]).map(id=>`<option${id===n.set_id?" selected":""}>${esc(id)}</option>`).join("")}
         ${n.status==="bad_set"?`<option selected>${esc(n.set_id)} (not on Sets tab)</option>`:""}</select>`;
     return `<tr class="${ok?"":"dim"}"><td class="c"><input type="checkbox" data-k="${n.date}:${esc(n.venue_id)}" ${ok&&n.sel!==false?"checked":""} ${ok?"":"disabled"}></td>
-      <td>${n.day}</td><td class="hide-sm">${fmtDate(n.date)}</td><td>${esc(n.venue)}${n.fit&&n.fit.audience.length?`<div>${gchips(n.fit.audience)}</div>`:""}</td><td>${esc(n.host)}</td>
+      <td>${n.day}</td><td class="hide-sm">${fmtDate(n.date)}</td><td>${md(n.venue)}${n.fit&&n.fit.audience.length?`<div>${gchips(n.fit.audience)}</div>`:""}</td><td>${md(n.host)}</td>
       <td>${tag}${n.fit&&n.fit.low&&n.fit.low.length?`<div class="small" style="color:var(--warn);margin-top:3px" title="Under a quarter of this set's tagged questions suit them">⚠ light on ${esc(n.fit.low.join(", "))}</div>`:""}</td></tr>`}).join("")
     :`<tr><td colspan="6" class="empty">No nights on the schedule for these days.</td></tr>`;
   $$("#rows input").forEach(c=>c.onchange=()=>{const n=S.nights.find(x=>`${x.date}:${x.venue_id}`===c.dataset.k);if(n)n.sel=c.checked;countSel()});
@@ -1297,11 +1297,11 @@ function renderSets(){const q=$("#sSearch").value.toLowerCase(),how=$("#sSort").
   $("#sCount").textContent=`${list.length} set${list.length==1?"":"s"}`;const r={sets:pageRows("sets",list,10)};
   $("#setsList").innerHTML=r.sets.length?r.sets.map(s=>{
     const probs=[...s.errors.map(e=>`<div class="small" style="color:var(--bad)">✗ ${esc(e)}</div>`),...s.warnings.map(w=>`<div class="small" style="color:var(--warn)">! ${esc(w)}</div>`)].join("");
-    const rounds=s.rounds.map((cats,i)=>`<div class="rnd"><h4>Round ${i+1}</h4>${cats.map(c=>`<div class="cat"><strong>${esc(c.title)}</strong>
+    const rounds=s.rounds.map((cats,i)=>`<div class="rnd"><h4>Round ${i+1}</h4>${cats.map(c=>`<div class="cat"><strong>${md(c.title)}</strong>
       ${c.bonus?'<span class="tag gold">bonus ×2</span>':""} ${c.type!=="standard"?`<span class="tag">${esc(c.type)}</span>`:""}
       ${c.questions!==5?`<span class="tag bad">${c.questions} questions</span>`:""}
       <div class="muted small">${esc(c.category_id)} · ${c.last_played?`last played ${fmtDate(c.last_played)} at ${esc(c.played_at.join(", "))}`:"never played"}</div></div>`).join("")||'<div class="muted small">empty</div>'}</div>`).join("");
-    const nights=s.nights.length?s.nights.map(n=>`${fmtDate(n.date)} ${esc(n.venue)}`).join(" · "):"not assigned to any night";
+    const nights=s.nights.length?s.nights.map(n=>`${fmtDate(n.date)} ${md(n.venue)}`).join(" · "):"not assigned to any night";
     const tbInfo=s.tiebreaker_id?`Tiebreakers: <span class="mono">${esc(s.tiebreaker_id)}</span> ${s.tiebreakers.map(t=>esc(plainTxt(t.question)).slice(0,40)).join(" · ")}`:'<span style="color:var(--warn)">No tiebreaker group</span>';
     return `<div class="card"><div class="row" style="margin-bottom:10px"><h2 style="margin:0">${esc(s.set_id)}</h2>
       ${s.errors.length?'<span class="tag bad">problems</span>':s.warnings.length?'<span class="tag warn">warnings</span>':'<span class="tag ok">ready</span>'}
@@ -1328,12 +1328,12 @@ function renderQuestions(){const r0=S.qR;if(!r0)return;
   const all=sortRows("q",r0.results,{id:x=>x.id,question:x=>plainTxt(x.question),answer:x=>plainTxt(x.answer),cats:x=>(x.categories[0]||{}).title||"",
     asked:x=>x.last||"",media:x=>x.question_image||x.answer_image?0:x.media?1:2});markSort("q");
   const r={...r0,results:pageRows("q",all,50)};
-  if($("#qCat").options.length<=1)$("#qCat").innerHTML='<option value="">All categories</option>'+r.categories.map(c=>`<option value="${esc(c.id)}">${esc(c.title)}${c.retired?" (retired)":""}</option>`).join("");
+  if($("#qCat").options.length<=1)$("#qCat").innerHTML='<option value="">All categories</option>'+r.categories.map(c=>`<option value="${esc(c.id)}">${esc(plainTxt(c.title))}${c.retired?" (retired)":""}</option>`).join("");
   $("#qCount").textContent=r.matches===r.total?`${r.total} questions`:`${r.matches} of ${r.total}`;
   $("#qRows").innerHTML=r.results.length?r.results.map((x,i)=>{const img=x.question_image||x.answer_image;
     return `<tr class="click${x.retired?" dim":""}" data-i="${i}"><td class="hide-sm">${img?`<img class="thumb" loading="lazy" src="${assetUrl(img)}" alt="">`:x.media?'<span class="tag">'+(/\.(mp3|m4a|wav|aac)$/i.test(x.media)?"♪ audio":"▶ video")+'</span>':""}</td>
       <td class="mono">${esc(x.id)}</td><td>${md(x.question)}${x.retired?' <span class="tag">retired</span>':""}<div class="row" style="gap:4px">${dtag(x.difficulty)}${gchips(x.generations)}</div></td><td><strong>${md(x.answer)}</strong></td>
-      <td class="hide-sm small">${x.categories.map(c=>esc(c.title)).join("<br>")||'<span class="muted">none</span>'}</td>
+      <td class="hide-sm small">${x.categories.map(c=>md(c.title)).join("<br>")||'<span class="muted">none</span>'}</td>
       <td class="hide-sm small" style="white-space:nowrap">${x.times?`${x.times}× · ${fmtDate(x.last)}`:'<span class="muted">never</span>'}</td></tr>`}).join("")
     :`<tr><td colspan="6" class="empty">No questions match.</td></tr>`;
   $$("#qRows tr.click").forEach(tr=>tr.onclick=()=>{const nx=tr.nextElementSibling;if(nx&&nx.classList.contains("detail")){nx.remove();return}
@@ -1345,7 +1345,7 @@ function renderQuestions(){const r0=S.qR;if(!r0)return;
       <div style="flex:1;min-width:220px"><div style="white-space:pre-wrap">${md(x.question)}</div>${x.question_note?`<div class="small"><i>${md(x.question_note)}</i></div>`:""}
       <div style="margin-top:6px">Answer: <strong>${md(x.answer)}</strong>${x.answer_note?` <span class="small"><i>${md(x.answer_note)}</i></span>`:""}</div>
       ${x.notes?`<div class="small muted">Notes: ${esc(x.notes)}</div>`:""}
-      <div class="small" style="margin-top:6px">In: ${x.categories.map(c=>`${esc(c.title)} <span class="muted mono">${esc(c.id)}</span>`).join(", ")||"no category"}</div>
+      <div class="small" style="margin-top:6px">In: ${x.categories.map(c=>`${md(c.title)} <span class="muted mono">${esc(c.id)}</span>`).join(", ")||"no category"}</div>
       <div class="small muted" style="margin-top:4px">${x.history.length?"Asked: "+x.history.map(h=>`${fmtDate(h.date)} ${esc(h.venue)}`).join(" · "):"Never asked yet"}</div>
       <div style="margin-top:10px" class="row"><button class="sm primary" data-editq>Edit question</button><button class="sm" data-aiq>Check with AI</button></div></div></div></td>`;
     d.querySelector("[data-editq]").onclick=()=>editQuestion(x,()=>loadQuestions());
@@ -1485,7 +1485,7 @@ async function editQuestion(q,after,which){q=q||{};const isNew=!q.id;
       <div class="hint">For a typical bar team: easy = most teams get it, hard = few do</div></div>
     <label>Who'll know it</label><div>${gpick("qg",q.generations)}<div class="hint">Generations likely to know the answer: used to balance sets for each venue's crowd</div></div>
     <label>Retired</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="retired" ${q.retired?"checked":""}> don't use this question any more</label></div>
-    ${isNew?"":`<label>Used in</label><div class="small" style="padding-top:7px">${(q.categories||[]).map(c=>esc(c.title)).join(", ")||"no category yet"}</div>`}</div>`,
+    ${isNew?"":`<label>Used in</label><div class="small" style="padding-top:7px">${(q.categories||[]).map(c=>md(c.title)).join(", ")||"no category yet"}</div>`}</div>`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Add question":"Save","primary",async dd=>{
       const v={question:val(dd,'[data-f=question]'),answer:val(dd,'[data-f=answer]'),question_note:val(dd,'[data-f=question_note]'),
         answer_note:val(dd,'[data-f=answer_note]'),question_image:getQ(),answer_image:getA(),media:getM(),
@@ -1509,8 +1509,8 @@ function renderCats(){if(!S.cats)return;const q=$("#cSearch").value.toLowerCase(
     {id:c=>c.id,label:c=>c.label,type:c=>c.type,n:c=>c.questions.length,last:c=>c.last_played,sets:c=>c.in_sets.length});markSort("cats");
   $("#cCount").textContent=`${all.length} categor${all.length==1?"y":"ies"}`;const cs=pageRows("cats",all,50);
   $("#cRows").innerHTML=cs.length?cs.map(c=>{const n=c.questions.length,ago=daysAgo(c.last_played);
-    return `<tr class="click${c.retired?" dim":""}" data-cid="${esc(c.id)}"><td class="mono">${esc(c.id)}</td><td><strong>${esc(c.label)}</strong>${c.retired?' <span class="tag">retired</span>':""}
-      <div class="small muted">${esc(c.blurb).slice(0,110)}${c.blurb.length>110?"…":""}</div><div class="row" style="gap:4px">${(()=>{const n=Object.fromEntries(DIFFS.map(x=>[x,c.questions.filter(q=>q.difficulty===x).length]));
+    return `<tr class="click${c.retired?" dim":""}" data-cid="${esc(c.id)}"><td class="mono">${esc(c.id)}</td><td><strong>${md(c.label)}</strong>${c.retired?' <span class="tag">retired</span>':""}
+      <div class="small muted">${esc(plainTxt(c.blurb)).slice(0,110)}${plainTxt(c.blurb).length>110?"…":""}</div><div class="row" style="gap:4px">${(()=>{const n=Object.fromEntries(DIFFS.map(x=>[x,c.questions.filter(q=>q.difficulty===x).length]));
         return DIFFS.filter(x=>n[x]).map(x=>`${dtag(x)}<span class="small muted">${n[x]}</span>`).join(" ")})()}${gchips(GENS.filter(g=>c.gens[g]>=3))}</div></td><td class="hide-sm">${c.type!=="standard"?`<span class="tag">${esc(c.type)}</span>`:'<span class="muted small">standard</span>'}${c.season_tag?`<div class="small muted">${esc(c.season_tag)}</div>`:""}</td>
       <td>${n===5?`<span class="tag ok">5</span>`:`<span class="tag ${n?"warn":"bad"}">${n}</span>`}</td>
       <td class="hide-sm small">${c.last_played?`${fmtDate(c.last_played)} <span class="muted">(${ago}d ago)</span><div class="muted">${esc(c.played_at.join(", "))}</div>`:'<span class="muted">never</span>'}</td>
@@ -1519,9 +1519,9 @@ function renderCats(){if(!S.cats)return;const q=$("#cSearch").value.toLowerCase(
   $$("#cRows tr.click").forEach(tr=>tr.onclick=()=>editCategory(S.cats.categories.find(c=>c.id===tr.dataset.cid)))}
 RENDER.cats=renderCats;$("#cSearch").oninput=()=>{PAGE.cats=0;renderCats()};$("#cRetired").onchange=renderCats;$("#newCat").onclick=()=>editCategory(null);$("#ideasBtn").onclick=aiIdeas;
 async function editCategory(c){c=c||{questions:[],type:"standard"};const isNew=!c.id;let slots=c.questions.map(q=>({id:q.id,question:q.question,answer:q.answer,generations:q.generations||[],difficulty:q.difficulty||""}));
-  const d=dialog(1,isNew?"New category":`Edit ${c.title} (${c.id})`,`<div class="f">
+  const d=dialog(1,isNew?"New category":`Edit ${plainTxt(c.title)} (${c.id})`,`<div class="f">
     <label>Title</label><div><input type="text" data-f="title" value="${esc(c.title)}" placeholder="e.g. Turkey"></div>
-    <label>Intro blurb</label><div><textarea data-f="blurb" placeholder="Shown on the category intro slide">${esc(c.blurb)}</textarea></div>
+    <label>Intro blurb</label><div><textarea data-f="blurb" placeholder="Shown on the category intro slide">${esc(c.blurb)}</textarea><div class="hint">Formatting: <span class="mono">*italic*</span> · <span class="mono">**bold**</span> · <span class="mono">[red]…[/red]</span> · <span class="mono">[gold]…[/gold]</span></div></div>
     <label>Type</label><div><select data-f="type">${["standard","music","movie"].map(t=>`<option${t===c.type?" selected":""}>${t}</option>`).join("")}</select></div>
     <label>Season</label><div><input type="text" data-f="season_tag" value="${esc(c.season_tag)}" placeholder="e.g. November (optional)"></div>
     <label>Notes</label><div><input type="text" data-f="notes" value="${esc(c.notes)}"></div>
@@ -1574,7 +1574,7 @@ async function editSet(set){const isNew=!set;const cr=await get("/api/categories
   const tr=await get("/api/tiebreakers").catch(()=>({groups:[]}));let groups=tr.groups||[],tbSel=set?set.tiebreaker_id||"":"";
   // a category already used in another slot isn't offered again
   const opts=(sel,taken)=>`<option value="">— pick a category —</option>`+cats.filter(c=>(!c.retired||c.id===sel)&&(c.id===sel||!taken.has(c.id))).map(c=>{const ago=daysAgo(c.last_played);
-    return `<option value="${esc(c.id)}"${c.id===sel?" selected":""}>${esc(c.label)}${c.questions.length!==5?` (${c.questions.length}q)`:""}${c.type!=="standard"?` · ${c.type}`:""}${ago!==null?` · ${ago}d ago`:""}</option>`}).join("");
+    return `<option value="${esc(c.id)}"${c.id===sel?" selected":""}>${esc(plainTxt(c.label))}${c.questions.length!==5?` (${c.questions.length}q)`:""}${c.type!=="standard"?` · ${c.type}`:""}${ago!==null?` · ${ago}d ago`:""}</option>`}).join("");
   const tbLabel=g=>`${g.id}: ${g.items.map(t=>plainTxt(t.question).replace(/^what year (did|was|were)\s*/i,"")).join(" · ").slice(0,90)}${g.sets.length?` (used in ${g.sets.length} set${g.sets.length>1?"s":""})`:""}`;
   const d=dialog(1,isNew?"New set":`Edit set ${set.set_id}`,`<div class="f" style="margin-bottom:12px"><label>Set ID</label><div>
       <input type="text" id="setId" value="${esc(isNew?nextSetId():set.set_id)}" ${isNew?"":"readonly"}><div class="hint">${isNew?"Usually year-week-letter, e.g. 2026-W49-A":"Set IDs can't be changed (nights and history refer to them)"}</div></div></div>
@@ -1647,7 +1647,7 @@ function renderVenues(){const q=$("#vnSearch").value.toLowerCase(),all=$("#vnIna
   $("#vnCount").textContent=`${vall.length} venue${vall.length==1?"":"s"}`;const vs=pageRows("vn",vall,50);
   $("#vnRows").innerHTML=vs.length?vs.map(v=>`<tr class="click${v.active?"":" dim"}" data-vid="${esc(v.venue_id)}">
     <td style="width:70px">${v.logo_ok?`<img class="thumb" style="width:56px;height:56px;object-fit:contain;background:#000" src="${assetUrl(v.logo)}" alt="">`:'<span class="tag warn">no logo</span>'}</td>
-    <td><strong>${esc(v.name)}</strong> <span class="mono muted">${esc(v.venue_id)}</span>${v.active?"":' <span class="tag">inactive</span>'}
+    <td><strong>${md(v.name)}</strong> <span class="mono muted">${esc(v.venue_id)}</span>${v.active?"":' <span class="tag">inactive</span>'}
       <div class="small muted">${v.games_played?`${v.games_played} game${v.games_played>1?"s":""} logged · last ${fmtDate(v.last_played)}`:"no games logged yet"}</div></td>
     <td>${esc(v.night)||'<span class="muted">—</span>'}<div>${gchips(v.audience)}</div></td><td class="hide-sm">${esc(v.calendar_name)||'<span class="tag bad">missing</span>'}</td>
     <td class="hide-sm">${esc(v.region)||'<span class="muted">—</span>'}</td>
@@ -1658,8 +1658,8 @@ $("#vnSearch").oninput=renderVenues;$("#vnInactive").onchange=renderVenues;$("#n
 const slug=s=>s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g,"").replace(/&/g," and ").replace(/['’]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,30);
 async function editVenue(v){const isNew=!v;v=v||{active:true,night:""};let idTouched=false;
   const days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-  const d=dialog(1,isNew?"New venue":`Edit ${v.name}`,`<div class="f">
-    <label>Name</label><div><input type="text" data-f="name" value="${esc(v.name)}" placeholder="e.g. Pop's Public House"><div class="hint">Shown on the decks</div></div>
+  const d=dialog(1,isNew?"New venue":`Edit ${plainTxt(v.name)}`,`<div class="f">
+    <label>Name</label><div><input type="text" data-f="name" value="${esc(v.name)}" placeholder="e.g. Pop's Public House"><div class="hint">Shown on the decks. Formatting works here too: <span class="mono">*italic*</span>, <span class="mono">[gold]…[/gold]</span>…</div></div>
     <label>Venue ID</label><div><input type="text" data-f="venue_id" value="${esc(v.venue_id)}" ${isNew?"":"readonly"} placeholder="e.g. pops">
       <div class="hint">${isNew?"Short code used by the schedule and history (letters, numbers, _). Can't be changed later.":"Can't be changed: the schedule and history refer to it."}</div></div>
     <label>Calendar name</label><div><input type="text" data-f="calendar_name" value="${esc(v.calendar_name)}" placeholder="e.g. Pop's">
@@ -1758,7 +1758,7 @@ async function aiCheckSet(set){if(!set||!await aiReady())return;const cats=set.r
   const all=[];let meta="",cost=0,searches=0;
   for(const [i,c] of cats.entries()){if(!d.open)return;d.querySelector(".ai-busy div:last-child").textContent=`Checking ${c.title} (${i+1} of ${cats.length})…`;
     const r=await post("/api/ai/check",{category_id:c.category_id}).catch(e=>({error:String(e)}));
-    if(r.error){d.querySelector(".db").innerHTML=`<div class="note bad">${esc(c.title)}: ${esc(r.error)}</div>`;return}
+    if(r.error){d.querySelector(".db").innerHTML=`<div class="note bad">${esc(plainTxt(c.title))}: ${esc(r.error)}</div>`;return}
     r.results.forEach(x=>x.id=x.id);all.push(...r.results);cost+=r.cost_usd||0;searches+=r.web_searches||0;meta=`${esc(r.provider)} · ${esc(r.model)}`}
   showAiResults(d,all,`${meta}${searches?` · ${searches} web searches`:""}${cost?` · about $${cost.toFixed(2)}`:""}`,()=>{})}
 async function aiGenerate(opts){if(!await aiReady())return;const st=S.aiStatus;
@@ -1867,8 +1867,8 @@ function renderImportCats(){const r=S.imData;if(!r)return;const qs=r.questions,q
     <table><tbody>${cats.map(c=>{const st=c.added_as?`<span class="tag ok">added as ${esc(c.added_as)}</span>`:c.new_questions?`<span class="tag warn">${c.new_questions} new question${c.new_questions==1?"":"s"}</span>`:'<span class="tag">all in bank</span>';
       const dates=c.appearances.map(a=>a.date).sort();
       return `<tr><td class="c"><input type="checkbox" data-ck="${esc(c.key)}" ${S.imSel.has(c.key)?"checked":""} ${c.added_as?"disabled":""}></td>
-        <td><strong>${esc(c.title)}</strong>${c.type!=="standard"?` <span class="tag">${esc(c.type)}</span>`:""} ${st}
-          <div class="small muted">${esc(c.blurb).slice(0,120)}</div>
+        <td><strong>${md(c.title)}</strong>${c.type!=="standard"?` <span class="tag">${esc(c.type)}</span>`:""} ${st}
+          <div class="small muted">${esc(plainTxt(c.blurb)).slice(0,120)}</div>
           <details><summary class="small">${c.questions.length} question${c.questions.length==1?"":"s"}</summary>${c.questions.map(k=>{const x=qs[k];
             return `<div class="row small" style="margin:4px 0;align-items:flex-start">${img(x.question_image)}${img(x.answer_image)}<div style="flex:1">${md(x.question)}${x.question_note?` <i class="muted">${md(x.question_note)}</i>`:""}<br><strong>${md(x.answer||"(no answer found)")}</strong>${x.answer_note?` <i class="muted">${md(x.answer_note)}</i>`:""}
               ${x.media?' <span class="tag">♪/▶ clip</span>':x.media_names&&x.media_names.length&&!r.media.clips.imported?' <span class="tag">clip not imported</span>':""}${x.in_bank?` <span class="tag">${esc(x.in_bank)}</span>`:""}</div></div>`}).join("")}</details></td>

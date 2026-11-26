@@ -114,19 +114,21 @@ class Canvas:
 
     STYLE_KIND = {(False, False): "body", (True, False): "bold", (False, True): "italic", (True, True): "bolditalic"}
 
-    def rich(self, x, y, w, text, kind="body", pt=20, color=WHITE, spacing=1.2):
-        """Like text() (left-aligned) but honours *italic* / **bold** / [red]..[/red] markup (see build.markup_runs);
-        returns the bottom (inches)."""
+    def rich(self, x, y, w, text, kind="body", pt=20, color=WHITE, align="left", h=None, valign="top", spacing=1.2):
+        """Draws wrapped text in the box starting at (x, y) inches with width w, honouring *italic* / **bold** /
+        [red]..[/red] markup (see build.markup_runs); returns the bottom (inches). Script and brush fonts have no
+        bold/italic cuts: there markup changes only the colour."""
+        styled = kind not in ("script", "brush")
         base_b, base_i = {"bold": (True, False), "bolditalic": (True, True), "italic": (False, True)}.get(kind, (False, False))
         fonts = {}
 
         def fnt(b, i):
-            k = self.STYLE_KIND[(b, i)]
+            k = self.STYLE_KIND[(b, i)] if styled else kind
             if k not in fonts:
                 fonts[k] = self.font(k, pt)
             return fonts[k]
         width = self.px(w)
-        out = []  # lines of [(text, font, fill)]
+        out = []  # lines of ([(text, font, fill)], width px)
         for runs in build.markup_runs(text, base_b, base_i):
             words, cur = [], []   # words = [[(piece, font, fill), ...]]
             for t, b, i, col in runs:
@@ -145,38 +147,31 @@ class Canvas:
                 gw = sum(self.d.textlength(p, font=f) for p, f, _ in grp)
                 sp = self.d.textlength(" ", font=grp[0][1]) if line else 0
                 if line and lw + sp + gw > width:
-                    out.append(line)
+                    out.append((line, lw))
                     line, lw, sp = [], 0, 0
                 if line:
                     line.append((" ", grp[0][1], grp[0][2]))
                 line += grp
                 lw += sp + gw
-            out.append(line)
+            out.append((line, lw))
         lh = fnt(base_b, base_i).size * spacing
-        top = self.px(y)
-        for n, line in enumerate(out):
-            lx = self.px(x)
-            for p, f, fill in line:
-                self.d.text((lx, top + n * lh), p, font=f, fill=fill)
-                lx += self.d.textlength(p, font=f)
-        return (top + lh * len(out)) / self.px_per_in
-
-    def text(self, x, y, w, text, kind="body", pt=20, color=WHITE, align="left", h=None, valign="top",
-             spacing=1.2):
-        """Draws wrapped text in the box starting at (x, y) inches with width w; returns the bottom (inches)."""
-        f = self.font(kind, pt)
-        lines = self.wrap(text, f, self.px(w))
-        lh = f.size * spacing
-        total = lh * len(lines)
+        total = lh * len(out)
         top = self.px(y)
         if h is not None and valign != "top":
             room = self.px(h) - total
             top += room / 2 if valign == "middle" else room
-        for i, line in enumerate(lines):
-            lw = self.d.textlength(line, font=f)
-            lx = self.px(x) + {"left": 0, "center": (self.px(w) - lw) / 2, "right": self.px(w) - lw}[align]
-            self.d.text((lx, top + i * lh), line, font=f, fill=color)
+        for n, (line, lw) in enumerate(out):
+            lx = self.px(x) + {"left": 0, "center": (width - lw) / 2, "right": width - lw}[align]
+            for p, f, fill in line:
+                self.d.text((lx, top + n * lh), p, font=f, fill=fill)
+                lx += self.d.textlength(p, font=f)
         return (top + total) / self.px_per_in
+
+    def text(self, x, y, w, text, kind="body", pt=20, color=WHITE, align="left", h=None, valign="top",
+             spacing=1.2):
+        """Draws wrapped text (markup allowed, as on the slides) in the box at (x, y) inches, width w; returns the
+        bottom (inches)."""
+        return self.rich(x, y, w, text, kind, pt, color, align=align, h=h, valign=valign, spacing=spacing)
 
     def picture(self, path, x, y, w, h):
         """Pastes an image fitted inside the box; returns its pixel box."""

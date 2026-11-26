@@ -102,4 +102,7 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - Script versioning: tbtgen_sheet.gs SCRIPT_VERSION (returned by "tables") vs build.SCRIPT_VERSION. Version = "YYYY-MM-DD HH:MM";
   run `python3 bump_script_version.py` after EVERY .gs change (stamps .gs first line, .gs SCRIPT_VERSION, build.py). Out-of-date script: terminal WARNING, red banner in the app, Status row, and save errors
   ("not editable"/"unknown action") get the redeploy hint.
+- Pictures: build.slide_image() converts formats a .pptx can't hold (AVIF, WebP, HEIC...; pptx = JPEG/PNG/GIF/BMP/TIFF)
+  once into build/img-<hash>.png|jpg (Pillow, else sips on a Mac); picture()/fit_box()/video Canvas.picture use it;
+  check() reports unreadable pictures via image_problem(). Importer CONVERT includes avif.
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

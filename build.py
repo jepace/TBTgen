@@ -304,6 +304,8 @@ def check_sets(bank, set_ids):
                 for col in ("question_image", "answer_image", "media"):
                     if qq[col] and asset_problem(qq[col]):
                         errs.append(f"Question {qid}: {asset_problem(qq[col])}")
+                    elif qq[col] and col != "media" and image_problem(qq[col]):
+                        errs.append(f"Question {qid}: {image_problem(qq[col])}")
         gid = bank["set_tiebreaker"].get(set_id, "")
         if not gid:
             warns.append(f"Set {set_id}: no tiebreaker group picked")
@@ -569,8 +571,54 @@ def bullets(slide, x, y, w, h, items, size=20):
     return tb
 
 
+PPTX_IMAGE_FORMATS = {"JPEG", "PNG", "GIF", "BMP", "TIFF"}  # what a .pptx can hold (python-pptx)
+
+
+def slide_image(path):
+    """A version of the picture a deck can hold. AVIF, WebP, HEIC, JPEG XL, ... are converted once (to PNG when the
+    picture has transparency, else JPEG) into the build cache. Raises ValueError if the picture can't be read."""
+    path = Path(path)
+    try:
+        with Image.open(path) as im:
+            if im.format in PPTX_IMAGE_FORMATS:
+                return path
+            fmt = im.format
+    except FileNotFoundError:
+        raise ValueError(f"missing picture {path.name}")
+    except Exception:
+        fmt = None  # Pillow can't read it: on a Mac, sips can read almost anything
+    st = path.stat()
+    key = hashlib.sha1(f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:16]
+    CACHE.mkdir(exist_ok=True)
+    for done in CACHE.glob(f"img-{key}.*"):
+        return done
+    if fmt:
+        with Image.open(path) as im:
+            im.seek(0)
+            alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
+            out = CACHE / f"img-{key}.{'png' if alpha else 'jpg'}"
+            (im.convert("RGBA") if alpha else im.convert("RGB")).save(out, quality=92)
+        return out
+    if sys.platform == "darwin":
+        out = CACHE / f"img-{key}.png"
+        r = subprocess.run(["sips", "-s", "format", "png", str(path), "--out", str(out)], capture_output=True)
+        if r.returncode == 0 and out.exists():
+            return out
+    raise ValueError(f"can't read picture {path.name} (unknown or unsupported format)")
+
+
+def image_problem(rel):
+    """None if the picture named in a sheet cell can go on a slide, else why not."""
+    try:
+        slide_image(asset(rel))
+        return None
+    except ValueError as e:
+        return f"assets/{rel}: {e}"
+
+
 def picture(slide, path, x, y, w, h):
     """Place an image fitted (aspect preserved) and centred inside the box."""
+    path = slide_image(path)
     with Image.open(path) as im:
         iw, ih = im.size
     scale = min(w / iw, h / ih)
@@ -579,6 +627,7 @@ def picture(slide, path, x, y, w, h):
 
 
 def fit_box(path, x, y, w, h):
+    path = slide_image(path)
     with Image.open(path) as im:
         iw, ih = im.size
     scale = min(w / iw, h / ih)

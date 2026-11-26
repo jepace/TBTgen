@@ -31,7 +31,7 @@ from pathlib import Path
 import keynote_read as kr
 
 ROOT = Path(__file__).resolve().parent
-CONVERT = {"tif", "tiff", "jxl", "heic", "heif", "bmp", "webp"}   # turned into .jpg/.png on import
+CONVERT = {"tif", "tiff", "jxl", "heic", "heif", "bmp", "webp", "avif"}   # turned into .jpg/.png on import
 WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5}
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 

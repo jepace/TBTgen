@@ -180,6 +180,7 @@ class Canvas:
 
     def picture(self, path, x, y, w, h):
         """Pastes an image fitted inside the box; returns its pixel box."""
+        path = build.slide_image(path)  # AVIF/WebP/HEIC... read the same way the decks do
         with Image.open(path) as im:
             im = im.convert("RGBA")
             bw, bh = self.px(w), self.px(h)

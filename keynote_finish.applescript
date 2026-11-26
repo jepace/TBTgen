@@ -1,5 +1,6 @@
 -- Opens generated .pptx decks in Keynote, fixes the auto-advance timing, and saves them as .key files.
 --
+-- Apple's Keynote is addressed by its app ID, so other apps with "Keynote" in the name don't get picked.
 -- Usage (Terminal, on the Mac):
 --   osascript keynote_finish.applescript "/path/to/2026-11-23 101 Wine Press.pptx" [more.pptx ...]
 --
@@ -13,9 +14,9 @@ on run argv
 	end if
 	set report to ""
 	-- start Keynote and wait until it is ready (opening a file too early fails with "isn't running")
-	tell application "Keynote" to launch
+	tell application id "com.apple.iWork.Keynote" to launch
 	repeat 60 times
-		if application "Keynote" is running then exit repeat
+		if application id "com.apple.iWork.Keynote" is running then exit repeat
 		delay 0.5
 	end repeat
 	delay 2
@@ -29,7 +30,7 @@ on run argv
 		end try
 		set inFile to POSIX file pptxPath
 		set outFile to POSIX file keyPath
-		tell application "Keynote"
+		tell application id "com.apple.iWork.Keynote"
 			activate
 			open inFile
 			delay 2

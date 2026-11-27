@@ -12,3 +12,4 @@ tbtgen_config.json
 .venv/
 ai_usage.jsonl
 imports/
+assets/winners/

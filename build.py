@@ -98,6 +98,11 @@ def is_yes(v):
     return str(v).strip().upper() in YES
 
 
+def is_no(v):
+    """An explicit no (blank is not a no)."""
+    return str(v).strip().upper() in ("N", "NO", "FALSE", "0")
+
+
 def table_rows(values):
     """Rows of a tab (list of lists, header first) as dicts keyed by header. Columns with no header are
     ignored; "(auto)" helper columns are kept but don't make an otherwise empty row count."""
@@ -150,15 +155,17 @@ def sheet_call(cfg, action, payload=None):
 
 
 SHEET_URL = None  # the Google Sheet's own address, when the web app reports it
-SCRIPT_VERSION = "2026-11-25 23:58"  # the tbtgen_sheet.gs this TBTgen expects (its SCRIPT_VERSION)
+SCRIPT_VERSION = "2026-11-27 17:56"  # the tbtgen_sheet.gs this TBTgen expects (its SCRIPT_VERSION)
 SHEET_SCRIPT = None    # the version the deployed script reports ("" = older than versioning)
+RESULTS_KEY = None     # the sheet's results-only key (see tbtgen_sheet.gs resultsKey_)
 
 
 def tables_from_sheet(cfg):
     global SHEET_URL
     data = sheet_call(cfg, "tables")
-    global SHEET_SCRIPT
+    global SHEET_SCRIPT, RESULTS_KEY
     SHEET_URL = data.get("url") or SHEET_URL
+    RESULTS_KEY = data.get("results_key") or None   # limited key for the scorekeeper pages (sending results only)
     SHEET_SCRIPT = str(data.get("version") or "")
     if SHEET_SCRIPT < SCRIPT_VERSION:
         print(f"WARNING: the Google Sheet's script is out of date ({SHEET_SCRIPT or 'an older version'}; this TBTgen "
@@ -236,8 +243,8 @@ def assign_ids(path):
         ws = wb[tab]
         hdr = [c.value for c in ws[1]]
         ci, ni = hdr.index(col), hdr.index(needs)
-        used = [int(str(r[ci].value)[1:]) for r in ws.iter_rows(min_row=2)
-                if r[ci].value and str(r[ci].value).startswith(prefix) and str(r[ci].value)[1:].isdigit()]
+        used = [int(str(r[ci].value)[len(prefix):]) for r in ws.iter_rows(min_row=2)
+                if r[ci].value and str(r[ci].value).startswith(prefix) and str(r[ci].value)[len(prefix):].isdigit()]
         nxt = max(used, default=0) + 1
         for r in ws.iter_rows(min_row=2):
             if not r[ci].value and r[ni].value not in (None, ""):
@@ -800,6 +807,35 @@ def venue_logo(venue):
     return p if venue.get("logo") and p.exists() else ASSETS / "brand/tbt_logo.png"
 
 
+FORMAT_ITEMS = [
+    "3 Rounds of 15 Questions each.", "60 Seconds for each Question.", "Questions will not be repeated.",
+    "Answers will be given and scored after each Round.", "Short intermission after each Round.",
+    "At the end of 3 Rounds the team with the most points wins!"]
+
+
+def rules_items(venue):
+    """The rules slide, with this venue's team-size penalty (Venues: team_max, size_penalty, penalty_per)."""
+    import scores
+    r = scores.venue_rules(venue)
+    pts = scores.clean_num(r["size_penalty"])
+    when = "every round" if r["penalty_per"] == "round" else "once per game"
+    return [
+        "No Cheating!|Please keep phones, notes, watches, etc. away during questions.",
+        f"{r['team_max']} Members Max Per Team.|{pts} point{'' if pts == 1 else 's'} penalty for each member over "
+        f"{r['team_max']} ({when}).",
+        "My Judgement Is Final.|The host has final say on challenges, right or wrong!",
+        "Buy Food and Drinks, and Tip Your Servers!|Support small business and those working hard for you tonight.",
+        "Have Fun!|Remember, this is a fun event; be respectful and enjoy yourself!"]
+
+
+def ordinal_date(d):
+    """'September 23rd'"""
+    d = as_date(d)
+    n = d.day
+    suf = "th" if 11 <= n % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{d.strftime('%B')} {n}{suf}"
+
+
 def slide_venue_title(deck, venue):
     s = deck.slide()
     picture(s, venue_logo(venue), Inches(4.4), Inches(0.5), Inches(4.5), Inches(4.0))
@@ -976,16 +1012,8 @@ def build_deck(bank, row, outdir):
     host = str(row.get("host", "") or "").strip()
     if host:
         slide_host(deck, venue, host)
-    slide_bullets(deck, venue, "Trivia Format", [
-        "3 Rounds of 15 Questions each.", "60 Seconds for each Question.", "Questions will not be repeated.",
-        "Answers will be given and scored after each Round.", "Short intermission after each Round.",
-        "At the end of 3 Rounds the team with the most points wins!"], size=24)
-    slide_bullets(deck, venue, "Trivia Rules", [
-        "No Cheating!|Please keep phones, notes, watches, etc. away during questions.",
-        "6 Members Max Per Team.|1 point penalty for each member over 6.",
-        "My Judgement Is Final.|The host has final say on challenges, right or wrong!",
-        "Buy Food and Drinks, and Tip Your Servers!|Support small business and those working hard for you tonight.",
-        "Have Fun!|Remember, this is a fun event; be respectful and enjoy yourself!"], size=22)
+    slide_bullets(deck, venue, "Trivia Format", FORMAT_ITEMS, size=24)
+    slide_bullets(deck, venue, "Trivia Rules", rules_items(venue), size=22)
     slide_upcoming(deck, venue, settings)
 
     for rnd in (1, 2, 3):
@@ -1036,6 +1064,12 @@ def build_deck(bank, row, outdir):
     stem = safe_name(plain(f"{as_date(row['date'])} {venue['name']}" + (f" ({host_txt})" if host_txt else "")))
     deck.prs.save(outdir / f"{stem}.pptx")
     (outdir / f"{stem} - answer key.txt").write_text(plain("\n".join(key_lines)) + "\n")
+    if row["venue_id"] != "__preview__":
+        try:
+            import scorekeeper
+            scorekeeper.write(bank, row, venue, outdir, stem)
+        except Exception as e:  # the deck matters more than the score page
+            print(f"WARNING: couldn't write the scorekeeper page: {e}")
     return outdir / f"{stem}.pptx", total_secs
 
 
@@ -1108,6 +1142,10 @@ def main():
     ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
     ap.add_argument("--keynote", action="store_true",
                     help="Mac only: also save a Keynote (.key) copy of each deck (keynote_finish.applescript)")
+    ap.add_argument("--pregame", metavar="VENUE_ID",
+                    help="build the pregame deck (+ last week's winners picture) for a venue -> out/pregame/; "
+                         "with --date for a given night (default: the venue's next scheduled night)")
+    ap.add_argument("--pregame-all", action="store_true", help="also build a pregame deck for each night built")
     ap.add_argument("--preview", metavar="SET_ID",
                     help="build a preview deck of this set, not tied to a night (out/preview/); nothing is logged")
     ap.add_argument("--video", metavar="SET_ID", help="make the at-home video for this set (out/video/)")
@@ -1146,6 +1184,20 @@ def main():
     if missing:
         print(f"NOTE: {len(missing)} question(s) have no ID yet and can't be used until they do.")
 
+    if a.pregame:
+        if a.pregame not in bank["venues"]:
+            sys.exit(f"Venue '{a.pregame}' is not on the Venues tab.")
+        import pregame
+        when = as_date(a.date) if a.date else min(
+            (as_date(r["date"]) for r in bank["Schedule"] if r.get("venue_id") == a.pregame and r.get("date")
+             and as_date(r["date"]) >= dt.date.today()), default=dt.date.today())
+        path, img = pregame.build_pregame(bank, a.pregame, when, Path(a.out) / "pregame")
+        print(f"built  {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}   (pregame for {when})")
+        if img:
+            print(f"built  {img.relative_to(ROOT) if img.is_relative_to(ROOT) else img}   (winners picture)")
+        if a.keynote:
+            make_keynote([path])
+        return
     if a.preview:
         if a.preview not in bank["sets"]:
             sys.exit(f"Set '{a.preview}' is not on the Sets tab.")
@@ -1252,6 +1304,16 @@ def main():
         built.append(path)
         print(f"built  {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}   "
               f"(question time ≈ {secs / 60:.0f} min)")
+        sk = path.with_name(path.stem + " - scorekeeper.html")
+        if sk.exists():
+            print(f"built  {sk.relative_to(ROOT) if sk.is_relative_to(ROOT) else sk}   (scorekeeper: works offline)")
+        if a.pregame_all:
+            import pregame
+            pg, img = pregame.build_pregame(bank, r["venue_id"], r["date"], Path(a.out) / "pregame")
+            built.append(pg)
+            print(f"built  {pg.relative_to(ROOT) if pg.is_relative_to(ROOT) else pg}   (pregame)")
+            if img:
+                print(f"built  {img.relative_to(ROOT) if img.is_relative_to(ROOT) else img}   (winners picture)")
     if a.keynote and built:
         make_keynote(built)
     if a.record:

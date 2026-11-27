@@ -57,17 +57,22 @@ sheet("Settings", ["key", "value", "meaning"], [
     ("facebook", "Trivia By Troy", ""),
     ("calendar_id", "8c65afbf52eeb5b75e6502c813588834f034bd7b5f8933e6eb67709921e1c983@group.calendar.google.com",
      "The 'Trivia By Troy Schedule' Google Calendar (used by TBTgen > Pull schedule from calendar)"),
+    ("contact_email", "triviabytroy@gmail.com", "Shown on the pregame deck's contact slide"),
+    ("pregame_seconds", 15, "Seconds each pregame slide shows (the pregame deck loops)"),
+    ("results_sms", "", "Phone number the scorekeeper's 'Text the results' button sends to (blank: choose in Messages)"),
 ], [24, 18, 80])
 
 # ---------------------------------------------------------------- Venues
-sheet("Venues", ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active", "calendar_name", "audience"], [
+sheet("Venues", ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active", "calendar_name", "audience",
+                 "team_max", "size_penalty", "penalty_per"], [
     ("wine_press", "101 Wine Press", "venues/101_wine_press.jpg", "North", "Wed",
-     "November 25th No Trivia - Happy Thanksgiving!\nDecember 2nd\nDecember 9th", "Y", "101 Wine Press", "Gen X, Millennial"),
+     "November 25th No Trivia - Happy Thanksgiving!\nDecember 2nd\nDecember 9th", "Y", "101 Wine Press", "Gen X, Millennial",
+     6, 1, "game"),
     ("taproom", "Sample Taproom", "venues/sample_taproom.png", "South", "Tue", "December 1st\nDecember 8th", "Y",
-     "Sample Taproom", "Millennial, Gen Z"),
+     "Sample Taproom", "Millennial, Gen Z", 8, 1, "round"),
     ("pub", "Sample Pub", "venues/sample_pub.png", "North", "Wed", "December 3rd\nDecember 10th", "Y", "Sample Pub",
-     "Boomer, Gen X"),
-], [14, 22, 30, 10, 8, 50, 8, 22, 22])
+     "Boomer, Gen X", 6, 1, "game"),
+], [14, 22, 30, 10, 8, 50, 8, 22, 22, 10, 12, 12])
 
 # ---------------------------------------------------------------- Categories
 cats = [
@@ -267,8 +272,34 @@ usage.append((D(2026, 3, 10), "taproom", "2026-W11-A", CID["best_actors"], QID[(
 sheet("Usage", ["date", "venue_id", "set_id", "category_id", "question_id"], usage, [12, 12, 12, 12, 12],
       date_cols=[1])
 
+# ---------------------------------------------------------------- Scores (sample: 101 Wine Press, a season so far)
+import random as _r
+_rng = _r.Random(13)
+TEAMS = ["Quiz Khalifa", "Trivia Newton-John", "The Know-It-Ales", "Les Quizerables", "Smarty Pints",
+         "Agatha Quiztie", "Pub Hub", "The Brainy Bunch"]
+sheet("Teams", ["team_id", "name", "venue_id", "aliases", "active", "notes"],
+      [(f"TM{i:04d}", n, "wine_press", "Quizzy McQuizface" if n == "Pub Hub" else "", "", "")
+       for i, n in enumerate(TEAMS, 1)], [10, 28, 14, 28, 8, 30])
+skill = {f"TM{i:04d}": 0.55 + 0.4 * _rng.random() for i in range(1, len(TEAMS) + 1)}
+results = []
+for wk in range(9):
+    d = D(2026, 9, 23) + dt.timedelta(weeks=wk)
+    if d == D(2026, 11, 25):
+        continue
+    for tid, sk in skill.items():
+        if _rng.random() < 0.2:
+            continue  # didn't come that week
+        r = [max(0, min(20, round(_rng.gauss(sk * 17, 2.5)))) for _ in range(2)] + [max(0, min(30, round(_rng.gauss(sk * 24, 3))))]
+        players = _rng.choice([3, 4, 4, 5, 5, 6, 6, 7])
+        results.append((d, "wine_press", tid, players, *r, "", "", ""))
+sheet("Results", ["date", "venue_id", "team_id", "players", "round1", "round2", "round3", "tiebreak", "photo", "notes"],
+      results, [12, 14, 10, 8, 8, 8, 8, 9, 30, 20], date_cols=[1])
+sheet("Seasons", ["venue_id", "season", "start_date", "weeks", "drop_lowest"],
+      [("wine_press", 13, D(2026, 9, 23), 13, 1), ("taproom", 1, D(2026, 11, 3), 13, 1)],
+      [14, 8, 12, 8, 12], date_cols=[3])
+
 wb._sheets = [wb[n] for n in ["Settings", "Venues", "Categories", "Questions", "CategoryQuestions", "Sets",
-                              "Tiebreakers", "Schedule", "Usage"]]
+                              "Tiebreakers", "Schedule", "Usage", "Teams", "Results", "Seasons"]]
 
 ws = wb["Categories"]
 dv = DataValidation(type="list", formula1='"standard,music,movie"')

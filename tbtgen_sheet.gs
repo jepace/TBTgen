@@ -1,4 +1,4 @@
-// ===== TBTgen sheet script · VERSION 2026-11-25 23:58 · paste ALL of this file, replacing everything =====
+// ===== TBTgen sheet script · VERSION 2026-11-27 17:56 · paste ALL of this file, replacing everything =====
 /**
  * TBTgen helpers for the Trivia Bank Google Sheet.
  *
@@ -37,6 +37,7 @@
 const ID_RULES = {
   Questions:  { idCol: 1, textCol: 2, prefix: 'Q', width: 5 },
   Categories: { idCol: 1, textCol: 2, prefix: 'C', width: 4 },
+  Teams:      { idCol: 1, textCol: 2, prefix: 'TM', width: 4 },
 };
 
 function onOpen() {
@@ -237,7 +238,17 @@ function showKey_(key) {
 }
 
 // Bump when this script changes; TBTgen compares it with the version it expects (build.SCRIPT_VERSION).
-const SCRIPT_VERSION = '2026-11-25 23:58';
+const SCRIPT_VERSION = '2026-11-27 17:56';
+
+// A second, limited key that goes into the hosts' scorekeeper pages: it can only send a night's results
+// (submit_results), never read or change anything else. Made on first use; "Make a new generator key" doesn't
+// change it (delete the TBTGEN_RESULTS_KEY script property to replace it).
+function resultsKey_() {
+  const props = PropertiesService.getScriptProperties();
+  let k = props.getProperty('TBTGEN_RESULTS_KEY');
+  if (!k) { k = makeKey_(); props.setProperty('TBTGEN_RESULTS_KEY', k); }
+  return k;
+}
 
 function keyOk_(given) {
   const key = PropertiesService.getScriptProperties().getProperty(KEY_PROP);
@@ -266,7 +277,7 @@ function tables_() {
       sh.getRange(1, 1, rows, cols).getValues().map(r => r.map(v =>
         v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : v));
   });
-  return { ok: true, tables: tables, url: ss.getUrl(), version: SCRIPT_VERSION };
+  return { ok: true, tables: tables, url: ss.getUrl(), version: SCRIPT_VERSION, results_key: resultsKey_() };
 }
 
 /**
@@ -289,7 +300,11 @@ const EDITABLE = {
   Sets: ['set_id', 'round', 'slot', 'category_id', 'bonus', 'tiebreaker_id'],
   Tiebreakers: ['tiebreaker_id', 'order', 'question', 'answer'],
   Schedule: ['date', 'venue_id', 'set_id', 'host', 'calendar_event'],
-  Venues: ['venue_id', 'name', 'logo', 'region', 'night', 'upcoming_nights', 'active', 'calendar_name', 'audience'],
+  Venues: ['venue_id', 'name', 'logo', 'region', 'night', 'upcoming_nights', 'active', 'calendar_name', 'audience',
+           'team_max', 'size_penalty', 'penalty_per'],
+  Teams: ['team_id', 'name', 'venue_id', 'aliases', 'active', 'notes'],
+  Results: ['date', 'venue_id', 'team_id', 'players', 'round1', 'round2', 'round3', 'tiebreak', 'photo', 'notes'],
+  Seasons: ['venue_id', 'season', 'start_date', 'weeks', 'drop_lowest'],
   Settings: ['key', 'value', 'meaning'],
 };
 
@@ -297,6 +312,11 @@ function doPost(e) {
   const lock = LockService.getDocumentLock();
   try {
     const body = JSON.parse(e.postData.contents);
+    if (body.action === 'submit_results' && typeof body.token === 'string' &&
+        (keyOk_(body.token) || body.token === resultsKey_())) {
+      lock.waitLock(20000);
+      return json_(submitResults_(body));
+    }
     if (!keyOk_(body.token)) return json_({ ok: false, error: 'wrong or missing key' });
     if (body.action === 'tables') return json_(tables_());
     lock.waitLock(20000);
@@ -310,6 +330,51 @@ function doPost(e) {
   } finally {
     try { lock.releaseLock(); } catch (_) {}
   }
+}
+
+/**
+ * One night's results from a scorekeeper page: {venue_id, date, teams: [{team_id?, name, players, round1..3,
+ * tiebreak}]}. Unknown names become new teams of that venue (Teams are per venue); the venue's rows for that date
+ * in Results are replaced, so sending twice is harmless.
+ */
+function submitResults_(body) {
+  const venue = String(body.venue_id || '').trim(), date = String(body.date || '').trim();
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(venue) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('bad venue or date');
+  const list = (body.teams || []).slice(0, 250);
+  const tinfo = tabInfo_('Teams');
+  const trows = tableRows_(tinfo.sh);
+  const key = s => String(s || '').trim().replace(/^'/, '').toLowerCase();
+  const numOr = (v, max) => { const n = Number(v); return isFinite(n) && n >= 0 && n <= max ? n : ''; };
+  const known = {};
+  trows.forEach(t => {
+    if (String(t.venue_id) !== venue) return;
+    [t.name].concat(String(t.aliases || '').split(',')).forEach(n => { if (key(n)) known[key(n)] = String(t.team_id); });
+  });
+  const ids = new Set(trows.map(t => String(t.team_id)));
+  const fresh = [];
+  list.forEach(t => {
+    t.name = String(t.name || '').trim().slice(0, 80);
+    if (t.team_id && ids.has(String(t.team_id))) return;
+    t.team_id = known[key(t.name)] || '';
+    if (!t.team_id && t.name) fresh.push(t);
+  });
+  if (fresh.length) {
+    const r = appendRows_('Teams', fresh.map(t => ({ name: t.name, venue_id: venue })));
+    fresh.forEach((t, i) => { t.team_id = r.ids[i]; known[key(t.name)] = r.ids[i]; });
+  }
+  const rows = list.filter(t => t.team_id).map(t => ({
+    team_id: t.team_id, players: numOr(t.players, 99), round1: numOr(t.round1, 999), round2: numOr(t.round2, 999),
+    round3: numOr(t.round3, 999), tiebreak: numOr(t.tiebreak, 100000),
+    notes: String(t.notes || '').slice(0, 200) }));
+  // keep a winners' photo already attached to this night (photos are added later, in TBTgen)
+  const rinfo = tabInfo_('Results');
+  const photos = {};
+  tableRows_(rinfo.sh).forEach(r => {
+    if (String(r.venue_id) === venue && cellText_(r.date, rinfo.tz) === date && r.photo) photos[String(r.team_id)] = r.photo;
+  });
+  rows.forEach(r => { if (photos[r.team_id]) r.photo = photos[r.team_id]; });
+  replaceRows_('Results', { venue_id: venue, date: date }, rows);
+  return { ok: true, saved: rows.length, new_teams: fresh.length };
 }
 
 function appendUsage_(raw) {

@@ -117,6 +117,26 @@ Set them in the question editor or with **Tag with AI**. Venues have an **audien
   venue's audience;
 - Generate with AI and Category ideas can aim at chosen generations.
 
+## Scores, seasons and the pregame deck
+Replaces the per-venue Numbers scoresheet. Data lives in three tabs: **Teams** (permanent `TM####` IDs, per venue,
+old names kept as aliases, so renaming never loses history and same-named teams at different venues stay separate),
+**Results** (one row per team per night: players, round 1–3 scores, tiebreak, winners photo) and **Seasons** (per
+venue: number, first night, weeks, lowest weeks dropped). Each venue sets its team size and penalty on the Venues tab
+(`team_max`, `size_penalty`, `penalty_per` = game or round).
+- **Scorekeeper page**: every night's build also writes `… - scorekeeper.html` next to the deck. It works with no
+  internet (laptop, or AirDrop it to a phone): tap the venue's teams or type new ones, enter players and round scores,
+  see live standings, the size penalty and the tiebreaker (years off). It saves as you type. **Send to Trivia By Troy**
+  posts the results to the sheet (with a results-only key; sending again replaces the night); offline, use **Text the
+  results** or **Save results file** and import it in TBTgen.
+- **Scores tab**: per venue and season: standings (weighted = best N−1 of N, a missed week counts as 0; ties: weighted,
+  total, then weekly wins), every night with its winner, crowd stats (teams/players per night, team sizes, repeat
+  teams), teams (rename, deactivate), **Enter a night's scores**, **Import results file**, **New season**, **Winners
+  photo** (attach the team picture), **Social image** (a square "Trivia Winners!" picture) and **Pregame deck**.
+- **Pregame deck** (`build.py --pregame VENUE`, the Scores tab button, or "Also make pregame decks" next to Build):
+  Troy's loop of welcome, last week's winners (photo with logos and team name), format, contact, notes, rules (with the
+  venue's penalty), social, season rules, this season's weekly winners, standings and upcoming nights. Loops,
+  `pregame_seconds` per slide (Settings).
+
 ## AI assistant (optional)
 Runs **only** when you click a button; it suggests, and nothing changes until you accept.
 - **Check with AI** (a question, a category, or a set): is the answer correct and the single best answer (what
@@ -132,6 +152,7 @@ Runs **only** when you click a button; it suggests, and nothing changes until yo
 
 ## At-home video
 `python3 build.py --keynote ...          # Mac: also save .key copies (with any build or --preview)
+python3 build.py --pregame VENUE_ID [--date D]   # pregame deck + winners picture -> out/pregame/
 python3 build.py --preview SET_ID        # a deck of one set, not tied to a night -> out/preview/
 python3 build.py --video SET_ID` (or the Video tab) makes `out/video/SET_ID at-home.mp4`: title, how to play,
 3 rounds with the logo countdown on every question (default 30 s), the answers after each round, then a thanks
@@ -173,6 +194,7 @@ python3 build.py --ids                   # .xlsx only: fill in missing IDs
 - `tbtgen_app.py` + `TBTgen.command`: the app. `build.py`: the deck generator. `video.py`: the at-home video.
 - `bank_write.py`: saving to the sheet/xlsx. `ai.py`: the AI assistant.
 - `import_decks.py` + `keynote_read.py`: the old-deck importer.
+- `scores.py` (seasons, standings), `scorekeeper.py` (the offline score page), `pregame.py` (pregame deck, winners picture).
 - `tbtgen_sheet.gs`: the Google Sheet's Apps Script (menu, IDs, calendar pull, the web app the generator talks to).
 - `trivia_bank.xlsx`: a sample bank (`make_sample_bank.py` rebuilds it); `make_sample_media.py` makes placeholder clips.
 - `keynote_finish.applescript`: Mac only, untested attempt to fix Keynote's auto-advance after importing a .pptx.

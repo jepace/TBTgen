@@ -25,10 +25,14 @@ EDITABLE = {
     "Sets": ["set_id", "round", "slot", "category_id", "bonus", "tiebreaker_id"],
     "Tiebreakers": ["tiebreaker_id", "order", "question", "answer"],
     "Schedule": ["date", "venue_id", "set_id", "host", "calendar_event"],
-    "Venues": ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active", "calendar_name", "audience"],
+    "Venues": ["venue_id", "name", "logo", "region", "night", "upcoming_nights", "active", "calendar_name", "audience",
+               "team_max", "size_penalty", "penalty_per"],
+    "Teams": ["team_id", "name", "venue_id", "aliases", "active", "notes"],
+    "Results": ["date", "venue_id", "team_id", "players", "round1", "round2", "round3", "tiebreak", "photo", "notes"],
+    "Seasons": ["venue_id", "season", "start_date", "weeks", "drop_lowest"],
     "Settings": ["key", "value", "meaning"],
 }
-ID_RULES = {"Questions": ("Q", 5), "Categories": ("C", 4)}
+ID_RULES = {"Questions": ("Q", 5), "Categories": ("C", 4), "Teams": ("TM", 4)}
 
 
 class WriteError(Exception):
@@ -161,8 +165,8 @@ class XlsxWriter:
         new_id = None
         if tab in ID_RULES and not full.get(EDITABLE[tab][0]):
             prefix, width = ID_RULES[tab]
-            used = [int(str(ws.cell(r, 1).value)[1:]) for r in range(2, ws.max_row + 1)
-                    if str(ws.cell(r, 1).value or "").startswith(prefix) and str(ws.cell(r, 1).value)[1:].isdigit()]
+            used = [int(str(ws.cell(r, 1).value)[len(prefix):]) for r in range(2, ws.max_row + 1)
+                    if str(ws.cell(r, 1).value or "").startswith(prefix) and str(ws.cell(r, 1).value)[len(prefix):].isdigit()]
             new_id = f"{prefix}{max(used, default=0) + 1:0{width}d}"
             full[EDITABLE[tab][0]] = new_id
         self._write(ws, hdr, self._last_row(ws) + 1, full)
@@ -179,8 +183,8 @@ class XlsxWriter:
         nxt = None
         if tab in ID_RULES:
             prefix, width = ID_RULES[tab]
-            used = [int(str(ws.cell(r, 1).value)[1:]) for r in range(2, ws.max_row + 1)
-                    if str(ws.cell(r, 1).value or "").startswith(prefix) and str(ws.cell(r, 1).value)[1:].isdigit()]
+            used = [int(str(ws.cell(r, 1).value)[len(prefix):]) for r in range(2, ws.max_row + 1)
+                    if str(ws.cell(r, 1).value or "").startswith(prefix) and str(ws.cell(r, 1).value)[len(prefix):].isdigit()]
             nxt = max(used, default=0) + 1
         row = self._last_row(ws) + 1
         for r in rows:

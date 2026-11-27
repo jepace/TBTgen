@@ -271,6 +271,170 @@ def cat_labels(bank, by_c=None):
     return out
 
 
+# ------------------------------------------------------------------------------------------ scores
+def api_scores(venue_id="", season=""):
+    import scores
+    bank = get_bank()
+    venues = [{"id": vid, "name": build.plain(v.get("name") or vid), "active": not build.is_no(v.get("active"))}
+              for vid, v in bank["venues"].items() if vid]
+    venues.sort(key=lambda v: v["name"].lower())
+    if not venue_id:
+        played = defaultdict(int)
+        for r in bank.get("Results", []):
+            played[r.get("venue_id")] += 1
+        venue_id = max(venues, key=lambda v: played[v["id"]])["id"] if venues else ""
+    out = {"venues": venues, "venue_id": venue_id, "has_tabs": all(t in bank for t in ("Teams", "Results", "Seasons"))}
+    if not venue_id or venue_id not in bank["venues"]:
+        return out
+    seas = [{"season": str(x.get("season")), "start_date": str(build.as_date(x["start_date"])),
+             "weeks": int(scores.num(x.get("weeks"), 13)), "drop_lowest": int(scores.num(x.get("drop_lowest"), 1))}
+            for x in scores.seasons(bank, venue_id)]
+    st = scores.season_standings(bank, venue_id, season=season or None)
+    rules = scores.venue_rules(bank["venues"][venue_id])
+    dates = sorted({str(build.as_date(r["date"])) for r in bank.get("Results", [])
+                    if r.get("venue_id") == venue_id and r.get("date")}, reverse=True)
+    nights = []
+    for d in dates:
+        rows = scores.night_results(bank, venue_id, d)
+        nights.append({"date": d, "teams": len(rows), "players": scores.clean_num(sum(scores.num(r.get("players")) for r, _ in rows)),
+                       "winner": scores.team_name(bank, str(rows[0][0]["team_id"])) if rows else "",
+                       "winner_id": str(rows[0][0]["team_id"]) if rows else "",
+                       "photo": next((str(r.get("photo")) for r, _ in rows if r.get("photo")), ""),
+                       "rows": [{"team_id": str(r["team_id"]), "name": scores.team_name(bank, str(r["team_id"])),
+                                 "players": str(r.get("players") or ""), "round1": str(r.get("round1") or ""),
+                                 "round2": str(r.get("round2") or ""), "round3": str(r.get("round3") or ""),
+                                 "tiebreak": str(r.get("tiebreak") or ""), "penalty": scores.clean_num(sc["penalty"]),
+                                 "total": scores.clean_num(sc["total"]), "photo": str(r.get("photo") or "")} for r, sc in rows]})
+    played_here = {str(r.get("team_id")) for r in bank.get("Results", []) if r.get("venue_id") == venue_id}
+    teams = [{"team_id": tid, "name": str(t.get("name") or ""), "aliases": str(t.get("aliases") or ""),
+              "active": not build.is_no(t.get("active")), "home": t.get("venue_id") == venue_id,
+              "games": sum(1 for r in bank.get("Results", []) if r.get("venue_id") == venue_id and str(r.get("team_id")) == tid)}
+             for tid, t in scores.teams(bank).items() if t.get("venue_id") == venue_id or tid in played_here]
+    out.update(seasons=seas, standings=st, nights=nights, rules=rules, teams=sorted(teams, key=lambda t: t["name"].lower()),
+               demographics=scores.demographics(bank, venue_id, since=st.get("start") if st.get("season") else None),
+               demographics_all=scores.demographics(bank, venue_id),
+               lines=scores.standings_lines(st) if st["rows"] else [])
+    return out
+
+
+def save_night(body):
+    """A night's results (typed in TBTgen, or a scorekeeper results file): new names become teams of the venue,
+    then the venue's results for that date are replaced. Winners' photos already attached are kept."""
+    import bank_write
+    import scores
+    bank = get_bank()
+    venue_id, date = str(body.get("venue_id") or ""), str(body.get("date") or "")
+    if venue_id not in bank["venues"]:
+        raise ValueError("unknown venue")
+    date = str(build.as_date(date))
+    w = bank_write.writer(ROOT)
+    rows, fresh = [], []
+    for t in (body.get("teams") or [])[:250]:
+        name = str(t.get("name") or "").strip()[:80]
+        tid = str(t.get("team_id") or "").strip()
+        if tid not in scores.teams(bank):
+            tid = scores.find_team(bank, name, venue_id) or ""
+        if not tid and not name:
+            continue
+        rows.append({"team_id": tid, "_name": name, **{k: t.get(k, "") for k in ("players", "round1", "round2", "round3", "tiebreak")}})
+        if not tid:
+            fresh.append(rows[-1])
+    seen = {}
+    for r in fresh:   # the same new name twice in one night = one team
+        key = r["_name"].lower()
+        if key not in seen:
+            seen[key] = None
+    if seen:
+        ids = w.append("Teams", [{"name": next(r["_name"] for r in fresh if r["_name"].lower() == k), "venue_id": venue_id}
+                                 for k in seen])
+        for k, tid in zip(seen, ids):
+            seen[k] = tid
+        for r in fresh:
+            r["team_id"] = seen[r["_name"].lower()]
+    photos = {str(r["team_id"]): r.get("photo") for r in bank.get("Results", [])
+              if r.get("venue_id") == venue_id and r.get("date") and str(build.as_date(r["date"])) == date and r.get("photo")}
+    out = []
+    for r in rows:
+        clean = {k: (v if str(v).strip() == "" else scores.clean_num(scores.num(v))) for k, v in r.items()
+                 if k in ("players", "round1", "round2", "round3", "tiebreak")}
+        out.append({"team_id": r["team_id"], **clean, **({"photo": photos[r["team_id"]]} if r["team_id"] in photos else {})})
+    w.replace("Results", {"venue_id": venue_id, "date": date}, out)
+    return {"saved": len(out), "new_teams": len(seen)}
+
+
+def save_team(body):
+    """Rename / (de)activate a team. A rename keeps the old name as an alias, so results and matching still work."""
+    import bank_write
+    import scores
+    bank = get_bank()
+    tid = str(body.get("team_id") or "")
+    t = scores.teams(bank).get(tid)
+    if not t:
+        raise ValueError("unknown team")
+    vals = {}
+    name = str(body.get("name") or "").strip()[:80]
+    if name and name != str(t.get("name")):
+        aliases = [a.strip() for a in str(t.get("aliases") or "").split(",") if a.strip()]
+        if str(t.get("name")).strip() not in aliases:
+            aliases.append(str(t.get("name")).strip())
+        vals.update(name=name, aliases=", ".join(a for a in aliases if a.lower() != name.lower()))
+    if "active" in body:
+        vals["active"] = "" if body["active"] else "N"
+    if vals:
+        bank_write.writer(ROOT).upsert("Teams", {"team_id": tid}, vals)
+    return {"ok": True}
+
+
+def save_season(body):
+    import bank_write
+    bank = get_bank()
+    venue_id = str(body.get("venue_id") or "")
+    if venue_id not in bank["venues"]:
+        raise ValueError("unknown venue")
+    season = str(body.get("season") or "").strip()
+    if not season:
+        raise ValueError("give the season a number")
+    start = str(build.as_date(body.get("start_date")))
+    weeks, drop = int(body.get("weeks") or 13), int(body.get("drop_lowest") if body.get("drop_lowest") not in (None, "") else 1)
+    if not (1 <= weeks <= 60 and 0 <= drop < weeks):
+        raise ValueError("weeks must be 1-60, and fewer weeks dropped than played")
+    w = bank_write.writer(ROOT)
+    old = str(body.get("old_season") or season)
+    w.replace("Seasons", {"venue_id": venue_id, "season": old}, [{"season": season, "start_date": start, "weeks": weeks,
+                                                                   "drop_lowest": drop}])
+    return {"ok": True}
+
+
+def make_social(body):
+    """The 'Trivia Winners!' square picture for one night -> out/social/."""
+    import pregame
+    bank = get_bank()
+    venue_id = str(body.get("venue_id") or "")
+    if venue_id not in bank["venues"]:
+        raise ValueError("unknown venue")
+    date = build.as_date(body.get("date"))
+    name = build.safe_name(f"{date} {build.plain(bank['venues'][venue_id].get('name', venue_id))} - winners") + ".png"
+    out = pregame.winners_image(bank, venue_id, date, OUT / "social" / name)
+    if not out:
+        raise ValueError("no results for that night")
+    return {"file": out.relative_to(OUT).as_posix()}
+
+
+def save_winners_photo(body):
+    """Upload the winners' picture and attach it to the night's winning team (Results.photo)."""
+    import bank_write
+    import scores
+    bank = get_bank()
+    venue_id, date = str(body.get("venue_id") or ""), str(build.as_date(body.get("date")))
+    rows = scores.night_results(bank, venue_id, date)
+    if not rows:
+        raise ValueError("no results for that night yet")
+    tid = str(body.get("team_id") or rows[0][0]["team_id"])
+    rel = save_upload("winners", f"{date} {venue_id} {body.get('name') or 'winners'}", body.get("data", ""))
+    bank_write.writer(ROOT).upsert("Results", {"date": date, "venue_id": venue_id, "team_id": tid}, {"photo": rel})
+    return {"ok": True, "photo": rel}
+
+
 def api_tiebreakers():
     bank = get_bank()
     used = defaultdict(list)
@@ -309,7 +473,7 @@ def api_categories():
     return {"categories": out, "lookback_days": lookback, "today": str(dt.date.today())}
 
 
-ASSET_FOLDERS = {"images": "images", "media": "media", "venues": "venues"}
+ASSET_FOLDERS = {"images": "images", "media": "media", "venues": "venues", "winners": "winners"}
 
 
 def api_assets(kind):
@@ -327,7 +491,7 @@ def save_upload(kind, name, data_url):
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem).strip("._") or "file"
     ext = re.sub(r"[^A-Za-z0-9]", "", Path(name).suffix.lower())[:5]
     pictures = {"jpg", "jpeg", "png", "gif", "webp"}
-    allowed = {"images": pictures, "venues": pictures, "media": {"mp3", "m4a", "wav", "aac", "mp4", "mov", "m4v"}}
+    allowed = {"images": pictures, "venues": pictures, "winners": pictures | {"heic", "avif"}, "media": {"mp3", "m4a", "wav", "aac", "mp4", "mov", "m4v"}}
     if ext not in allowed[kind if kind in allowed else "images"]:
         raise ValueError(f"file type .{ext} isn't allowed here")
     raw = base64.b64decode(data_url.split(",", 1)[-1])
@@ -363,6 +527,8 @@ def api_venues():
         out.append({"venue_id": vid, "name": str(v.get("name", "")), "logo": logo,
                     "logo_ok": bool(logo) and build.asset(logo).is_file(), "region": str(v.get("region", "")),
                     "night": str(v.get("night", "")), "upcoming_nights": str(v.get("upcoming_nights", "")),
+                    "team_max": str(v.get("team_max", "") or ""), "size_penalty": str(v.get("size_penalty", "") or ""),
+                    "penalty_per": str(v.get("penalty_per", "") or ""),
                     "active": str(v.get("active", "")).strip().upper() not in ("N", "NO", "FALSE", "0"),
                     "calendar_name": str(v.get("calendar_name", "")), "next_night": upcoming[0] if upcoming else "",
                     "audience": build.parse_gens(v.get("audience")),
@@ -449,8 +615,9 @@ def api_files():
                 files.append({"name": p.name, "rel": p.relative_to(OUT).as_posix(), "kind": "deck", "size": size,
                               "package": True, "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))})
                 continue
-            if p.is_file() and p.suffix.lower() in (".pptx", ".txt", ".mp4", ".key"):
-                kind = {".pptx": "deck", ".key": "deck", ".txt": "answer key", ".mp4": "video"}[p.suffix.lower()]
+            if p.is_file() and p.suffix.lower() in (".pptx", ".txt", ".mp4", ".key", ".html", ".png"):
+                kind = {".pptx": "deck", ".key": "deck", ".txt": "answer key", ".mp4": "video", ".html": "scorekeeper",
+                        ".png": "image"}[p.suffix.lower()]
                 st = p.stat()
                 files.append({"name": p.name, "rel": p.relative_to(OUT).as_posix(), "kind": kind, "size": st.st_size,
                               "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))})
@@ -693,6 +860,8 @@ class Handler(BaseHTTPRequestHandler):
                                                     diff=q.get("diff", ""), limit=int(q.get("limit") or 300) or 10**9))
             if u.path == "/api/files":
                 return self.send_json(api_files())
+            if u.path == "/api/scores":
+                return self.send_json(api_scores(q.get("venue", ""), q.get("season", "")))
             if u.path == "/api/tiebreakers":
                 return self.send_json(api_tiebreakers())
             if u.path == "/api/categories":
@@ -839,6 +1008,21 @@ class Handler(BaseHTTPRequestHandler):
             if p.exists():
                 open_path(p)
             return self.send_json({"ok": p.exists()})
+        if path.startswith("/api/scores/"):
+            import bank_write
+            fn = {"/api/scores/night": save_night, "/api/scores/team": save_team, "/api/scores/season": save_season,
+                  "/api/scores/photo": save_winners_photo, "/api/scores/social": make_social}.get(path)
+            if not fn:
+                return self.send_json({"error": "not found"}, 404)
+            try:
+                res = fn(body)
+            except (bank_write.WriteError, ValueError, KeyError, TypeError) as e:
+                return self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                return self.send_json({"error": f"couldn't save: {e}"}, 500)
+            with DATA_LOCK:
+                DATA["bank"] = None
+            return self.send_json({"ok": True, **res})
         if path == "/api/upload":
             try:
                 rel = save_upload(body.get("kind", "images"), body.get("name", "file"), body.get("data", ""))
@@ -861,6 +1045,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not body.get("media", True):
                     args.append("--video-no-media")
                 title = f"Video: {set_id}"
+            elif mode == "pregame":
+                venue_id = str(body.get("venue_id", ""))
+                if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", venue_id):
+                    return self.send_json({"error": "pick a venue"}, 400)
+                args, title = ["--pregame", venue_id], f"Pregame deck: {venue_id}"
+                if body.get("keynote"):
+                    args.append("--keynote")
             elif mode == "preview":
                 set_id = str(body.get("set_id", ""))
                 if not set_id:
@@ -875,6 +1066,8 @@ class Handler(BaseHTTPRequestHandler):
                 args = ["--only", ",".join(nights)]
                 if body.get("keynote") and mode != "check":
                     args.append("--keynote")
+                if body.get("pregame") and mode != "check":
+                    args.append("--pregame-all")
                 if mode == "check":
                     args.append("--check")
                 elif body.get("record"):
@@ -1040,7 +1233,7 @@ th.asc::after{content:" ▲";font-size:.75em}th.desc::after{content:" ▼";font-
 <header><img class="brandlogo" src="/logo.png" alt="Trivia By Troy"><h1><b>TBT</b>gen</h1><span class="pill" id="source">…</span><span class="pill busy hidden" id="busy" title="Show progress"></span>
 <span class="spacer"></span><button id="reloadData" title="Read the spreadsheet again">Reload data</button>
 <button id="openSheet" class="hidden">Open spreadsheet</button><button id="quit" title="Stop TBTgen">Quit</button></header>
-<nav id="tabs"><a data-tab="nights">Nights</a><a data-tab="sets">Sets</a><a data-tab="categories">Categories</a><a data-tab="questions">Questions</a><a data-tab="venues">Venues</a>
+<nav id="tabs"><a data-tab="nights">Nights</a><a data-tab="sets">Sets</a><a data-tab="categories">Categories</a><a data-tab="questions">Questions</a><a data-tab="venues">Venues</a><a data-tab="scores">Scores</a>
 <a data-tab="video">Video</a><a data-tab="files">Files</a><a data-tab="import">Import</a><a data-tab="settings">Settings</a><a data-tab="status">Status</a></nav>
 <div id="notes"></div>
 
@@ -1063,6 +1256,8 @@ th.asc::after{content:" ▲";font-size:.75em}th.desc::after{content:" ▼";font-
       <input type="checkbox" id="record"> Log as played (Usage)</label>
     <label class="row" style="gap:6px" title="Mac only: Keynote opens each deck, fixes the timing and saves a .key next to the .pptx">
       <input type="checkbox" id="keynoteCopies"> Also make Keynote copies</label>
+    <label class="row" style="gap:6px" title="The deck that plays while teams arrive: welcome, last week's winners, season standings…">
+      <input type="checkbox" id="pregameToo"> Also make pregame decks</label>
     <span class="spacer"></span><button id="openout">Open decks folder</button></div>
 </div>
 </section>
@@ -1100,6 +1295,15 @@ th.asc::after{content:" ▲";font-size:.75em}th.desc::after{content:" ▼";font-
 </section>
 
 <!-- ============================== VENUES -->
+<section data-pane="scores" class="hidden">
+<div class="card"><div class="row"><select id="scVenue"></select><select id="scSeason"></select>
+  <button id="scSeasonEdit" class="sm">Season settings</button><button id="scSeasonNew" class="sm">New season</button>
+  <span class="spacer"></span><button id="scPregame" title="The deck that plays while teams arrive: welcome, last week's winners, standings…">Pregame deck</button><button id="scImport">Import results file…</button><button class="primary" id="scNight">Enter a night's scores</button>
+  <input type="file" id="scFile" accept=".json,application/json" class="hidden"></div>
+  <p class="muted small" style="margin:10px 0 0" id="scRules"></p></div>
+<div id="scBody"><div class="empty">Loading…</div></div>
+</section>
+
 <section data-pane="venues" class="hidden">
 <div class="card"><div class="row"><input type="search" id="vnSearch" placeholder="Search venues…">
   <label class="row small" style="gap:5px"><input type="checkbox" id="vnInactive"> show inactive</label>
@@ -1181,7 +1385,7 @@ th.asc::after{content:" ▲";font-size:.75em}th.desc::after{content:" ▼";font-
 <!-- ============================== FILES -->
 <section data-pane="files" class="hidden">
 <div class="card"><div class="row"><div class="seg" id="fKind"><button data-k="" class="on">All</button><button data-k="deck">Decks</button>
-  <button data-k="answer key">Answer keys</button><button data-k="video">Videos</button></div><input type="search" id="fSearch" placeholder="Filter by name…">
+  <button data-k="answer key">Answer keys</button><button data-k="video">Videos</button><button data-k="scorekeeper">Scorekeepers</button><button data-k="image">Images</button></div><input type="search" id="fSearch" placeholder="Filter by name…">
   <span class="spacer"></span><button id="fOpenFolder">Open folder</button></div></div>
 <div class="card" style="padding:6px 16px"><table><thead><tr><th data-tbl="files" data-sort="name">Name</th><th class="hide-sm" data-tbl="files" data-sort="kind">Kind</th><th class="hide-sm" data-tbl="files" data-sort="size">Size</th><th class="hide-sm" data-tbl="files" data-sort="made">Made</th><th></th></tr></thead>
   <tbody id="fRows"></tbody></table><div id="pg-files"></div></div>
@@ -1248,7 +1452,7 @@ const fmtLen=s=>`${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,"0")}
 function showTab(t){if(!$(`[data-pane="${t}"]`))t="nights";store.set("tab",t);
   $$("nav a").forEach(a=>a.classList.toggle("on",a.dataset.tab===t));$$("[data-pane]").forEach(p=>p.classList.toggle("hidden",p.dataset.pane!==t));
   if(location.hash!=="#"+t)history.replaceState(null,"","#"+t);
-  ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,categories:loadCats,questions:()=>S.loaded.q||loadQuestions(),venues:loadVenues,video:loadVideoTab,files:loadFiles,import:loadImportTab,settings:loadSettings,status:loadStatus}[t]||(()=>{}))()}
+  ({nights:()=>S.loaded.nights||loadWeek(),sets:loadSets,categories:loadCats,questions:()=>S.loaded.q||loadQuestions(),venues:loadVenues,scores:loadScores,video:loadVideoTab,files:loadFiles,import:loadImportTab,settings:loadSettings,status:loadStatus}[t]||(()=>{}))()}
 $$("nav a").forEach(a=>a.onclick=()=>showTab(a.dataset.tab));
 window.addEventListener("hashchange",()=>{const t=location.hash.slice(1);if(t&&t!==store.get("tab",""))showTab(t)});
 
@@ -1281,7 +1485,8 @@ $$("#weekSeg button").forEach(b=>b.onclick=()=>{$$("#weekSeg button").forEach(x=
 $("#pick").onchange=e=>{if(!e.target.value)return;$$("#weekSeg button").forEach(x=>x.classList.remove("on"));S.week=e.target.value;loadWeek()};
 $("#all").onclick=()=>{S.nights.forEach(n=>n.sel=true);renderNights()};$("#none").onclick=()=>{S.nights.forEach(n=>n.sel=false);renderNights()};
 $("#check").onclick=()=>run({mode:"check",nights:selected()});
-$("#build").onclick=()=>run({mode:"build",nights:selected(),record:$("#record").checked,keynote:$("#keynoteCopies").checked});
+$("#build").onclick=()=>run({mode:"build",nights:selected(),record:$("#record").checked,keynote:$("#keynoteCopies").checked,pregame:$("#pregameToo").checked});
+$("#pregameToo").checked=store.get("pregame",false);$("#pregameToo").onchange=e=>store.set("pregame",e.target.checked);
 $("#keynoteCopies").checked=store.get("keynote",false);$("#keynoteCopies").onchange=e=>store.set("keynote",e.target.checked);
 $("#openout").onclick=()=>post("/api/open",{folder:true});
 
@@ -1389,6 +1594,7 @@ function renderFiles(){const q=$("#fSearch").value.toLowerCase(),dflt={key:"made
   $$("[data-open]").forEach(b=>b.onclick=()=>post("/api/open",{file:b.dataset.open}));
   $$("[data-dl]").forEach(b=>b.onclick=()=>{location.href=fileUrl(b.dataset.dl,true)});
   $$("[data-view]").forEach(b=>b.onclick=async()=>{const rel=b.dataset.view;
+    if(b.dataset.kind==="scorekeeper"||b.dataset.kind==="image"){window.open(fileUrl(rel),"_blank");return}
     if(b.dataset.kind==="video"){const s=S.sets.find(x=>x.video&&x.video.file===rel);if(s){showTab("video");setTimeout(()=>playVideo(s),300);return}
       $("#fView").classList.remove("hidden");$("#fViewTitle").textContent=rel;$("#fViewBody").outerHTML=`<video id="fViewBody" controls src="${fileUrl(rel)}"></video>`;return}
     const txt=await fetch(fileUrl(rel)).then(r=>r.text());$("#fView").classList.remove("hidden");$("#fViewTitle").textContent=rel;
@@ -1637,6 +1843,101 @@ function editTiebreakers(g,groups,after){const isNew=!g;
 
 $("#newQ").onclick=()=>editQuestion(null,()=>loadQuestions());
 
+/* scores: per venue season standings, nights, teams, stats */
+async function loadScores(){const v=$("#scVenue").value||store.get("scVenue",""),sea=$("#scSeason").dataset.v||"";
+  const r=await get(`/api/scores?venue=${encodeURIComponent(v)}&season=${encodeURIComponent(sea)}`).catch(e=>({error:String(e)}));
+  if(r.error){$("#scBody").innerHTML=`<div class="card note bad">${esc(r.error)}</div>`;return}S.sc=r;
+  $("#scVenue").innerHTML=r.venues.map(x=>`<option value="${esc(x.id)}"${x.id===r.venue_id?" selected":""}>${esc(x.name)}${x.active?"":" (inactive)"}</option>`).join("");
+  if(!r.has_tabs){$("#scBody").innerHTML=`<div class="card note bad">The spreadsheet has no Teams / Results / Seasons tabs yet.</div>`;return}
+  const st=r.standings||{rows:[]};
+  $("#scSeason").innerHTML=(r.seasons||[]).length?r.seasons.map(x=>`<option value="${esc(x.season)}"${String(x.season)===String(st.season)?" selected":""}>Season ${esc(x.season)} (from ${fmtDate(x.start_date)})</option>`).join(""):'<option value="">No seasons yet</option>';
+  $("#scSeason").dataset.v=st.season??"";$("#scSeasonEdit").disabled=!st.season;
+  const R=r.rules;$("#scRules").textContent=`Team size ${R.team_max}; −${R.size_penalty} per extra member ${R.penalty_per==="round"?"every round":"once per game"} (set on the Venues tab). Results come from the hosts' scorekeeper pages, a results file, or are typed in here.`;
+  S.scRows=st.rows;RENDER.scs=renderStandings;RENDER.scn=renderNights2;RENDER.sct=renderTeams;
+  const d=r.demographics||{},a=r.demographics_all||{};
+  $("#scBody").innerHTML=`<div class="card"><div class="row" style="margin-bottom:8px"><h2 style="margin:0">${st.season?`Season ${esc(st.season)} standings`:"Standings"}</h2>
+      <span class="muted small">${st.season?`${st.weeks_played} of ${st.weeks_total} weeks played · lowest ${st.drop_lowest} week${st.drop_lowest==1?"":"s"} dropped (a missed week counts as 0) · ties: weighted, then total, then wins`:"Add a season (New season) to see standings."}</span>
+      <span class="spacer"></span><button class="sm" id="scCopy">Copy standings</button></div>
+    <table><thead><tr><th data-tbl="scs" data-sort="rank">#</th><th data-tbl="scs" data-sort="team">Team</th><th data-tbl="scs" data-sort="weighted">Weighted</th>
+      <th data-tbl="scs" data-sort="total">Season total</th><th class="hide-sm" data-tbl="scs" data-sort="weeks_played">Weeks</th><th class="hide-sm" data-tbl="scs" data-sort="low">Low</th>
+      <th class="hide-sm" data-tbl="scs" data-sort="wins">Wins</th><th class="hide-sm" data-tbl="scs" data-sort="last">Last week</th></tr></thead><tbody id="scsRows"></tbody></table><div id="pg-scs"></div></div>
+    <div class="card"><h2>Nights</h2><table><thead><tr><th data-tbl="scn" data-sort="date">Date</th><th data-tbl="scn" data-sort="teams">Teams</th><th class="hide-sm" data-tbl="scn" data-sort="players">Players</th>
+      <th data-tbl="scn" data-sort="winner">Winner</th><th></th></tr></thead><tbody id="scnRows"></tbody></table><div id="pg-scn"></div></div>
+    <div class="card"><h2>Crowd</h2><div class="kv">
+      <div>This season</div><div>${d.nights||0} nights · ${d.teams_per_night||0} teams and ${d.players_per_night||0} players a night · team size avg ${d.team_size_avg||0}, median ${d.team_size_median||0} · ${d.repeat_teams||0} of ${d.teams_total||0} teams came back (their avg size ${d.repeat_team_size_avg||0})</div>
+      <div>All time here</div><div>${a.nights||0} nights · ${a.teams_total||0} teams · ${a.teams_per_night||0} teams and ${a.players_per_night||0} players a night</div></div>
+      <div class="bars" style="margin-top:10px">${(d.by_night||[]).map(n=>`<div class="row small" style="gap:8px"><span style="width:80px">${fmtDate(n.date)}</span><span style="background:var(--accent,#c2185b);height:10px;border-radius:5px;width:${Math.max(4,n.players*4)}px"></span><span class="muted">${n.teams} teams · ${n.players} players</span></div>`).join("")}</div></div>
+    <div class="card"><h2>Teams</h2><p class="muted small" style="margin-top:0">Renaming a team keeps its history (the old name is remembered). Teams belong to a venue: same-named teams at other venues are separate.</p>
+      <table><thead><tr><th data-tbl="sct" data-sort="team_id">ID</th><th data-tbl="sct" data-sort="name">Team</th><th class="hide-sm" data-tbl="sct" data-sort="aliases">Also known as</th><th data-tbl="sct" data-sort="games">Games here</th><th></th></tr></thead>
+      <tbody id="sctRows"></tbody></table><div id="pg-sct"></div></div>`;
+  renderStandings();renderNights2();renderTeams();
+  $("#scCopy").onclick=()=>{navigator.clipboard.writeText((r.lines||[]).join("\n")).then(()=>toast("Standings copied"),()=>toast("Couldn't copy",true))}}
+function renderStandings(){const st=S.sc.standings||{rows:[]};const dflt={key:"rank",dir:1};
+  const rows=pageRows("scs",sortRows("scs",st.rows,{rank:x=>x.rank,team:x=>x.team,weighted:x=>x.weighted,total:x=>x.total,weeks_played:x=>x.weeks_played,low:x=>x.low,wins:x=>x.wins,last:x=>x.last},dflt),50);markSort("scs",dflt);
+  const medal=i=>["🥇","🥈","🥉"][i-1]||i;
+  $("#scsRows").innerHTML=rows.length?rows.map(x=>`<tr><td>${medal(x.rank)}</td><td><strong>${md(x.team)}</strong></td><td><strong>${x.weighted}</strong></td><td>${x.total}</td>
+    <td class="hide-sm">${x.weeks_played}</td><td class="hide-sm">${x.low}</td><td class="hide-sm">${x.wins||""}</td><td class="hide-sm">${x.last}</td></tr>`).join(""):'<tr><td colspan="8" class="empty">No scores this season yet.</td></tr>'}
+function renderNights2(){const dflt={key:"date",dir:-1};
+  const rows=pageRows("scn",sortRows("scn",S.sc.nights||[],{date:n=>n.date,teams:n=>n.teams,players:n=>n.players,winner:n=>n.winner},dflt),20);markSort("scn",dflt);
+  $("#scnRows").innerHTML=rows.length?rows.map(n=>`<tr><td>${fmtDate(n.date)}</td><td>${n.teams}</td><td class="hide-sm">${n.players}</td>
+    <td>${md(n.winner)} ${n.photo?`<img class="thumb" style="vertical-align:middle;width:36px;height:36px" src="${assetUrl(n.photo)}" alt="">`:""}</td>
+    <td style="text-align:right;white-space:nowrap"><button class="sm" data-scedit="${n.date}">Scores</button> <button class="sm" data-scphoto="${n.date}">${n.photo?"Change photo":"Winners photo"}</button> <button class="sm" data-scsocial="${n.date}" title="Square 'Trivia Winners!' picture for social media">Social image</button></td></tr>`).join(""):'<tr><td colspan="5" class="empty">No nights recorded yet.</td></tr>';
+  $$("[data-scedit]").forEach(b=>b.onclick=()=>editNight(S.sc.nights.find(n=>n.date===b.dataset.scedit)));
+  $$("[data-scphoto]").forEach(b=>b.onclick=()=>pickWinnersPhoto(S.sc.nights.find(n=>n.date===b.dataset.scphoto)));
+  $$("[data-scsocial]").forEach(b=>b.onclick=async()=>{const r=await post("/api/scores/social",{venue_id:S.sc.venue_id,date:b.dataset.scsocial});
+    if(r.error){toast(r.error,true);return}window.open(fileUrl(r.file),"_blank")})}
+function renderTeams(){const rows=pageRows("sct",sortRows("sct",S.sc.teams||[],{team_id:t=>t.team_id,name:t=>t.name,aliases:t=>t.aliases,games:t=>t.games},{key:"name",dir:1}),50);markSort("sct",{key:"name",dir:1});
+  $("#sctRows").innerHTML=rows.length?rows.map(t=>`<tr class="${t.active?"":"dim"}"><td class="mono">${esc(t.team_id)}</td><td><strong>${md(t.name)}</strong>${t.home?"":' <span class="tag">visiting</span>'}${t.active?"":' <span class="tag">inactive</span>'}</td>
+    <td class="hide-sm small">${esc(t.aliases)}</td><td>${t.games}</td><td style="text-align:right"><button class="sm" data-scteam="${esc(t.team_id)}">Edit</button></td></tr>`).join(""):'<tr><td colspan="5" class="empty">No teams yet.</td></tr>';
+  $$("[data-scteam]").forEach(b=>b.onclick=()=>{const t=S.sc.teams.find(x=>x.team_id===b.dataset.scteam);
+    dialog(1,`Team ${t.team_id}`,`<div class="f"><label>Name</label><div><input type="text" id="tmName" value="${esc(t.name)}"><div class="hint">The current name moves to "also known as", so old results and scoresheets still match.</div></div>
+      <label>Active</label><div><label class="row small" style="gap:6px"><input type="checkbox" id="tmActive" ${t.active?"checked":""}> offered on this venue's scorekeeper</label></div></div>`,
+      [["spacer"],["Cancel","",d=>d.close()],["Save","primary",async d=>{const r=await post("/api/scores/team",{team_id:t.team_id,name:val(d,"#tmName"),active:d.querySelector("#tmActive").checked});
+        if(r.error){toast(r.error,true);return}toast("Team saved");d.close();loadScores()}]])})}
+function editNight(n,prefill){const vid=S.sc.venue_id,isNew=!n;const teams=S.sc.teams||[];
+  let rows=(n?n.rows:prefill||[]).map(x=>({...x}));if(!rows.length)rows=[{name:"",players:"",round1:"",round2:"",round3:"",tiebreak:""}];
+  const draw=d=>{d.querySelector("#nRows").innerHTML=rows.map((x,i)=>`<tr data-i="${i}"><td><input type="text" list="nTeams" data-k="name" value="${esc(x.name)}" placeholder="team"></td>
+      ${["players","round1","round2","round3","tiebreak"].map(k=>`<td><input type="text" inputmode="decimal" data-k="${k}" value="${esc(x[k])}" style="max-width:78px;text-align:center"></td>`).join("")}
+      <td><button class="sm" data-rm="${i}">✕</button></td></tr>`).join("");
+    d.querySelectorAll("#nRows input").forEach(inp=>inp.oninput=()=>{rows[+inp.closest("tr").dataset.i][inp.dataset.k]=inp.value;if(inp.dataset.k==="name")rows[+inp.closest("tr").dataset.i].team_id=""});
+    d.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{rows.splice(+b.dataset.rm,1);draw(d)})};
+  const d=dialog(1,isNew?"Enter a night's scores":`Scores for ${fmtDate(n.date)}`,`<div class="f" style="margin-bottom:10px"><label>Date</label><div><input type="date" id="nDate" value="${n?n.date:new Date().toISOString().slice(0,10)}" ${isNew?"":"readonly"} style="max-width:200px"></div></div>
+    <datalist id="nTeams">${teams.map(t=>`<option value="${esc(t.name)}">`).join("")}</datalist>
+    <table><thead><tr><th>Team</th><th>Players</th><th>Round 1</th><th>Round 2</th><th>Round 3</th><th title="Total years off on the tiebreaker (only for ties)">Tiebreak</th><th></th></tr></thead><tbody id="nRows"></tbody></table>
+    <button class="sm" id="nAdd" style="margin-top:6px">Add team</button>
+    <p class="muted small">Names that don't match a team at this venue become new teams. Saving replaces this night's results.</p>`,
+    [["spacer"],["Cancel","",dd=>dd.close()],["Save scores","primary",async dd=>{const date=val(dd,"#nDate");if(!date){toast("Pick the date",true);return}
+      const list=rows.filter(x=>String(x.name||"").trim());if(!list.length){toast("Add at least one team",true);return}
+      const r=await post("/api/scores/night",{venue_id:vid,date,teams:list});if(r.error){toast(r.error,true);return}
+      toast(`Saved ${r.saved} team${r.saved==1?"":"s"}${r.new_teams?`, ${r.new_teams} new`:""}`);dd.close();loadScores()}]]);
+  draw(d);d.querySelector("#nAdd").onclick=()=>{rows.push({name:"",players:"",round1:"",round2:"",round3:"",tiebreak:""});draw(d)}}
+function pickWinnersPhoto(n){const inp=document.createElement("input");inp.type="file";inp.accept="image/*";
+  inp.onchange=async()=>{const f=inp.files[0];if(!f)return;const data=await new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(f)});
+    const r=await post("/api/scores/photo",{venue_id:S.sc.venue_id,date:n.date,team_id:n.winner_id,name:f.name,data});if(r.error){toast(r.error,true);return}toast("Winners photo saved");loadScores()};inp.click()}
+function editSeason(x){const isNew=!x;const vid=S.sc.venue_id;const next=Math.max(0,...(S.sc.seasons||[]).map(s=>+s.season||0))+1;
+  x=x||{season:String(next),start_date:new Date().toISOString().slice(0,10),weeks:13,drop_lowest:1};
+  dialog(1,isNew?"New season":`Season ${x.season}`,`<div class="f"><label>Season number</label><div><input type="text" id="seN" value="${esc(x.season)}" style="max-width:120px"></div>
+    <label>First night</label><div><input type="date" id="seS" value="${esc(x.start_date)}" style="max-width:200px"><div class="hint">The season counts this venue's game nights from this date on</div></div>
+    <label>Weeks</label><div><input type="text" id="seW" value="${esc(x.weeks)}" style="max-width:120px"></div>
+    <label>Lowest weeks dropped</label><div><input type="text" id="seD" value="${esc(x.drop_lowest)}" style="max-width:120px"><div class="hint">1 = best 12 of 13</div></div></div>`,
+    [["spacer"],["Cancel","",d=>d.close()],[isNew?"Create season":"Save","primary",async d=>{
+      const r=await post("/api/scores/season",{venue_id:vid,season:val(d,"#seN"),old_season:isNew?"":x.season,start_date:val(d,"#seS"),weeks:val(d,"#seW"),drop_lowest:val(d,"#seD")});
+      if(r.error){toast(r.error,true);return}toast("Season saved");d.close();$("#scSeason").dataset.v=val(d,"#seN");loadScores()}]])}
+$("#scVenue").onchange=()=>{store.set("scVenue",$("#scVenue").value);$("#scSeason").dataset.v="";["scs","scn","sct"].forEach(k=>PAGE[k]=0);loadScores()};
+$("#scSeason").onchange=()=>{$("#scSeason").dataset.v=$("#scSeason").value;loadScores()};
+$("#scSeasonNew").onclick=()=>editSeason(null);
+$("#scSeasonEdit").onclick=()=>editSeason((S.sc.seasons||[]).find(x=>String(x.season)===String(S.sc.standings.season)));
+$("#scNight").onclick=()=>editNight(null);
+$("#scPregame").onclick=()=>run({mode:"pregame",venue_id:S.sc.venue_id,keynote:store.get("keynote",false)});
+$("#scImport").onclick=()=>$("#scFile").click();
+$("#scFile").onchange=async()=>{const f=$("#scFile").files[0];$("#scFile").value="";if(!f)return;let j;
+  try{j=JSON.parse(await f.text())}catch(e){toast("That isn't a results file",true);return}
+  if(!j.tbtgen_results||!j.venue_id||!j.date){toast("That isn't a TBTgen results file",true);return}
+  if(!S.sc.venues.some(v=>v.id===j.venue_id)){toast(`Unknown venue ${j.venue_id}`,true);return}
+  if(!confirm(`Import ${j.teams.length} team${j.teams.length==1?"":"s"} for ${j.venue_id} on ${j.date}? This replaces that night's results.`))return;
+  const r=await post("/api/scores/night",{venue_id:j.venue_id,date:j.date,teams:j.teams});if(r.error){toast(r.error,true);return}
+  toast(`Imported ${r.saved} team${r.saved==1?"":"s"}${r.new_teams?`, ${r.new_teams} new`:""}`);$("#scVenue").value=j.venue_id;store.set("scVenue",j.venue_id);loadScores()};
+
 /* venues */
 async function loadVenues(){const r=await get("/api/venues").catch(e=>({error:String(e)}));
   if(r.error){$("#vnRows").innerHTML=`<tr><td colspan="6" class="empty">${esc(r.error)}</td></tr>`;return}S.venues=r.venues;renderVenues()}
@@ -1670,12 +1971,15 @@ async function editVenue(v){const isNew=!v;v=v||{active:true,night:""};let idTou
       <div class="hint">Venues in the same region get a warning if they share questions on back-to-back nights</div></div>
     <label>Upcoming nights</label><div><textarea data-f="upcoming_nights" placeholder="One per line, e.g.&#10;December 2nd&#10;December 9th">${esc(v.upcoming_nights)}</textarea>
       <div class="hint">Shown on the deck's “Upcoming Trivia Nights” slide</div></div>
+    <label>Team size</label><div class="pickrow"><input type="text" data-f="team_max" value="${esc(v.team_max)}" placeholder="6" style="max-width:70px">
+      <span class="small">members max; extras cost</span><input type="text" data-f="size_penalty" value="${esc(v.size_penalty)}" placeholder="1" style="max-width:60px">
+      <span class="small">point(s) each</span><select data-f="penalty_per" style="max-width:150px"><option value="game">once per game</option><option value="round"${v.penalty_per==="round"?" selected":""}>every round</option></select></div>
     <label>Audience</label><div>${gpick("va",v.audience)}<div class="hint">Who usually plays here. Nights whose set misses this crowd get flagged on the Nights tab.</div></div>
     <label>Active</label><div><label class="row small" style="gap:6px"><input type="checkbox" data-f="active" ${v.active?"checked":""}> currently hosting trivia</label></div></div>`,
     [["spacer"],["Cancel","",dd=>dd.close()],[isNew?"Add venue":"Save","primary",async dd=>{
       const vals={name:val(dd,'[data-f=name]'),calendar_name:val(dd,'[data-f=calendar_name]'),logo:getLogo(),night:val(dd,'[data-f=night]'),
         region:val(dd,'[data-f=region]'),upcoming_nights:dd.querySelector('[data-f=upcoming_nights]').value.replace(/\s+$/,""),active:dd.querySelector('[data-f=active]').checked?"Y":"N",
-        audience:gread(dd,"va").join(", ")};
+        audience:gread(dd,"va").join(", "),team_max:val(dd,'[data-f=team_max]'),size_penalty:val(dd,'[data-f=size_penalty]'),penalty_per:dd.querySelector('[data-f=penalty_per]').value};
       const id=val(dd,'[data-f=venue_id]');
       if(!vals.name||!id){toast("A venue needs a name and an ID",true);return}
       if(isNew&&!/^[a-z0-9_]+$/.test(id)){toast("Use only lower-case letters, numbers and _ in the venue ID",true);return}
@@ -1697,6 +2001,9 @@ const KNOWN_SETTINGS={
   repeat_lookback_days:{label:"Repeat warning window (days)",type:"int",min:1,max:3650,help:"Warn when a venue saw a category or question within this many days."},
   video_media_extra_seconds:{label:"Video: extra seconds after a clip",type:"int",min:0,max:300,help:"In at-home videos, time to answer after a song or movie clip ends."},
   company_name:{label:"Company name",type:"text",help:""},
+  contact_email:{label:"Contact email",type:"text",help:"Shown on the pregame deck's contact slide."},
+  pregame_seconds:{label:"Pregame: seconds per slide",type:"int",min:3,max:120,help:"The pregame deck loops while teams arrive."},
+  results_sms:{label:"Text results to",type:"text",help:"Phone number for the scorekeeper's \"Text the results\" button (blank: pick in Messages)."},
   instagram:{label:"Instagram handle",type:"text",help:"Shown on the Upcoming Trivia Nights slide and the video's end card."},
   facebook:{label:"Facebook page",type:"text",help:"Shown on the Upcoming Trivia Nights slide and the video's end card."},
   calendar_id:{label:"Google Calendar ID",type:"text",help:"Used by TBTgen → Pull schedule from calendar in the sheet. Ends in @group.calendar.google.com."}};

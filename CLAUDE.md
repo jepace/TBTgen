@@ -107,4 +107,15 @@ Generates Trivia By Troy game decks (.pptx) from a question bank spreadsheet. Se
 - Pictures: build.slide_image() converts formats a .pptx can't hold (AVIF, WebP, HEIC...; pptx = JPEG/PNG/GIF/BMP/TIFF)
   once into build/img-<hash>.png|jpg (Pillow, else sips on a Mac); picture()/fit_box()/video Canvas.picture use it;
   check() reports unreadable pictures via image_problem(). Importer CONVERT includes avif.
+- Scores (replaces Troy's per-venue Numbers scoresheet; user shared one: Game/Season/Output/Demographics, best 12 of 13,
+  tie = weighted -> total -> wins, team renames lost history there). Tabs Teams (TM####, per venue: same names at
+  different venues are different teams; aliases = old names), Results (date, venue_id, team_id, players, round1-3,
+  tiebreak, photo), Seasons (per venue). Venues: team_max/size_penalty/penalty_per (game|round). scores.py = engine.
+  scorekeeper.py writes "<deck stem> - scorekeeper.html" with each night (offline, localStorage, phone layout); sends via
+  gs submit_results with a RESULTS-ONLY key (resultsKey_, given to build via "tables" -> build.RESULTS_KEY), fetch
+  no-cors text/plain; fallback text/sms + results .json imported in the app. App Scores tab (/api/scores, /api/scores/
+  night|team|season|photo|social). pregame.py: build.py --pregame VENUE / --pregame-all; Troy's two policy graphics in
+  assets/brand/pregame/; winners_image() 1080px (TBT logo pasted with luminance mask, venue logo black cut away).
+  Winners photos go to assets/winners/ (gitignored: photos of customers). Live sheet has the tabs (empty) + Seasons
+  row wine_press 13 from 2026-09-23. Old Numbers history import: NOT done (cells are in IWA tiles; strings readable).
 - Never commit generated decks (out/), cache (build/) or media (assets/media/).

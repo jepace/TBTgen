@@ -933,6 +933,47 @@ class Handler(BaseHTTPRequestHandler):
             with DATA_LOCK:
                 DATA["bank"] = None  # re-read on next request
             return self.send_json({"ok": True, "id": new_id})
+        if path == "/api/set/delete":
+            import bank_write
+            sid = str(body.get("set_id") or "").strip()
+            bank = get_bank()
+            if sid not in bank["sets"]:
+                return self.send_json({"error": f"no set {sid!r}"}, 400)
+            used = [r for r in bank["Schedule"] if str(r.get("set_id") or "").strip() == sid]
+            if used:
+                return self.send_json({"error": f"{sid} is still picked for {len(used)} night(s) on the Nights tab; "
+                                                "pick another set for those nights first"}, 400)
+            try:
+                bank_write.writer(ROOT).replace("Sets", {"set_id": sid}, [])
+            except bank_write.WriteError as e:
+                return self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                return self.send_json({"error": f"couldn't delete: {e}"}, 500)
+            with DATA_LOCK:
+                DATA["bank"] = None
+            return self.send_json({"ok": True})
+        if path == "/api/file/delete":
+            rel = str(body.get("file") or "")
+            p = (OUT / rel).resolve()
+            ok = OUT.resolve() in p.parents and (p.is_file() or (p.is_dir() and p.suffix.lower() == ".key"))
+            if not ok:
+                return self.send_json({"error": "not found"}, 404)
+            trash = Path.home() / ".Trash"
+            try:
+                if trash.is_dir():  # Mac: move to the Trash so it can be put back
+                    dest = trash / p.name
+                    n = 1
+                    while dest.exists():
+                        dest = trash / f"{p.stem} {n}{p.suffix}"
+                        n += 1
+                    shutil.move(str(p), str(dest))
+                elif p.is_dir():
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()
+            except OSError as e:
+                return self.send_json({"error": f"couldn't delete: {e}"}, 500)
+            return self.send_json({"ok": True})
         if path.startswith("/api/ai/"):
             import ai
             try:
@@ -1513,12 +1554,15 @@ function renderSets(){const q=$("#sSearch").value.toLowerCase(),how=$("#sSort").
       ${s.video?`<span class="tag">video ${fmtLen(s.video.length_seconds)}</span>`:""}<span class="spacer"></span>
       <button class="sm" data-editset="${esc(s.set_id)}">Edit set</button><button class="sm" data-aiset="${esc(s.set_id)}">Check with AI</button><button class="sm" data-tagset="${esc(s.set_id)}">Tag with AI</button>
       <button class="sm" data-preview="${esc(s.set_id)}" title="A deck of this set with the Trivia By Troy logo and no host, not tied to a night">Preview deck</button>
-      <button class="sm" data-video="${esc(s.set_id)}">${s.video?"Watch / remake video":"Make video"}</button></div>
+      <button class="sm" data-video="${esc(s.set_id)}">${s.video?"Watch / remake video":"Make video"}</button><button class="sm" data-delset="${esc(s.set_id)}" style="color:var(--bad)">Delete</button></div>
       <div class="grid3">${rounds}</div><div class="small muted" style="margin-top:10px">Nights: ${nights}</div><div class="small muted" style="margin-top:4px">${tbInfo}</div>
       <details style="margin-top:8px"><summary class="small">Age &amp; difficulty mix</summary><div style="margin-top:6px">${mixHtml(s.mix)}</div></details>
       ${probs?`<div style="margin-top:8px">${probs}</div>`:""}</div>`}).join(""):`<div class="card empty">${S.sets.length?"No sets match.":"No sets on the Sets tab yet."}</div>`;
   $$("[data-video]").forEach(b=>b.onclick=()=>{store.set("vSet",b.dataset.video);showTab("video")});
   $$("[data-preview]").forEach(b=>b.onclick=()=>run({mode:"preview",set_id:b.dataset.preview,keynote:store.get("keynote",false)}));
+  $$("[data-delset]").forEach(b=>b.onclick=async()=>{const id=b.dataset.delset;
+    if(!confirm(`Delete set ${id}? Its rows on the Sets tab are cleared. Categories and questions stay.`))return;
+    const r=await post("/api/set/delete",{set_id:id});if(r.error){alert(r.error);return}loadSets()});
   $$("[data-editset]").forEach(b=>b.onclick=()=>editSet(S.sets.find(x=>x.set_id===b.dataset.editset)));
   $$("[data-aiset]").forEach(b=>b.onclick=()=>aiCheckSet(S.sets.find(x=>x.set_id===b.dataset.aiset)));
   $$("[data-tagset]").forEach(b=>b.onclick=()=>aiTag({set_id:b.dataset.tagset},`Tag: set ${b.dataset.tagset}`,1,()=>loadSets()))}
@@ -1590,8 +1634,10 @@ function renderFiles(){const q=$("#fSearch").value.toLowerCase(),dflt={key:"made
   $("#fRows").innerHTML=fs.length?fs.map(f=>`<tr><td>${esc(f.name)}${f.rel.includes("/")?` <span class="muted small">${esc(f.rel.split("/")[0])}/</span>`:""}</td>
     <td class="hide-sm"><span class="tag">${f.kind}</span></td><td class="hide-sm small">${fmtSize(f.size)}</td><td class="hide-sm small">${esc(f.modified)}</td>
     <td style="text-align:right;white-space:nowrap">${f.kind!=="deck"?`<button class="sm" data-view="${esc(f.rel)}" data-kind="${f.kind}">View</button> `:""}<button class="sm" data-open="${esc(f.rel)}">Open</button>
-    ${f.package?"":`<button class="sm" data-dl="${esc(f.rel)}">Download</button>`}</td></tr>`).join(""):`<tr><td colspan="5" class="empty">No files yet. Build some decks or a video.</td></tr>`;
+    ${f.package?"":`<button class="sm" data-dl="${esc(f.rel)}">Download</button>`} <button class="sm" data-delf="${esc(f.rel)}" style="color:var(--bad)">Delete</button></td></tr>`).join(""):`<tr><td colspan="5" class="empty">No files yet. Build some decks or a video.</td></tr>`;
   $$("[data-open]").forEach(b=>b.onclick=()=>post("/api/open",{file:b.dataset.open}));
+  $$("[data-delf]").forEach(b=>b.onclick=async()=>{const rel=b.dataset.delf;
+    if(!confirm(`Move ${rel} to the Trash?`))return;const r=await post("/api/file/delete",{file:rel});if(r.error){alert(r.error);return}loadFiles()});
   $$("[data-dl]").forEach(b=>b.onclick=()=>{location.href=fileUrl(b.dataset.dl,true)});
   $$("[data-view]").forEach(b=>b.onclick=async()=>{const rel=b.dataset.view;
     if(b.dataset.kind==="scorekeeper"||b.dataset.kind==="image"){window.open(fileUrl(rel),"_blank");return}
